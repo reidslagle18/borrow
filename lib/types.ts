@@ -34,6 +34,39 @@ export interface Item {
   created_at: string;
 }
 
+export type RentalStatus = "reserved" | "active" | "completed" | "cancelled";
+
+export interface Customer {
+  id: number;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  instagram: string | null;
+  flag: "vip" | "problem" | null;
+  notes: string | null;
+}
+
+export interface Rental {
+  id: number;
+  item_id: string;
+  customer_id: number | null;
+  start_date: string; // YYYY-MM-DD
+  due_date: string;
+  returned_date: string | null;
+  status: RentalStatus;
+  rental_price: number;
+  damage_waiver: boolean;
+  late_fee: number;
+  damaged: boolean;
+  notes: string | null;
+  // joined fields
+  customer_name?: string | null;
+  brand?: string;
+  size?: string;
+  color?: string | null;
+  photo_url?: string | null;
+}
+
 export const TIERS: { value: Tier; label: string; price: number }[] = [
   { value: "standard", label: "Standard", price: 45 },
   { value: "mid", label: "Mid", price: 65 },

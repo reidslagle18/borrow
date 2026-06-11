@@ -50,6 +50,37 @@ async function createSchema(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS customers (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      phone TEXT,
+      email TEXT,
+      instagram TEXT,
+      flag TEXT CHECK (flag IN ('vip','problem')),
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS rentals (
+      id SERIAL PRIMARY KEY,
+      item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+      customer_id INT REFERENCES customers(id),
+      start_date DATE NOT NULL,
+      due_date DATE NOT NULL,
+      returned_date DATE,
+      status TEXT NOT NULL DEFAULT 'reserved'
+        CHECK (status IN ('reserved','active','completed','cancelled')),
+      rental_price NUMERIC(8,2) NOT NULL,
+      damage_waiver BOOLEAN NOT NULL DEFAULT false,
+      late_fee NUMERIC(8,2) NOT NULL DEFAULT 0,
+      damaged BOOLEAN NOT NULL DEFAULT false,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */
