@@ -1,36 +1,26 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# BORROW · Studio
 
-## Getting Started
+Internal operations dashboard for **BORROW**, a curated dress rental and consignment boutique.
 
-First, run the development server:
+**Live:** https://borrow-zeta.vercel.app (password-protected)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Stack
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- Next.js 16 (App Router) · Tailwind CSS v4
+- Neon Postgres (`borrow-db`) for all data
+- Vercel Blob (`borrow-store`) for item photos
+- Deployed on Vercel (App Studio team) — pushes to `main` auto-deploy
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Features
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- **Inventory** — add/edit/delete pieces with photo upload, brand, size, color,
+  tier (Standard $45 / Mid $65 / Premium $85), pricing, ownership (owned vs consignment),
+  consignor, event types, condition notes; auto-generated IDs (`BRW-0001`);
+  status tracking (Available / Reserved / Rented Out / Being Cleaned / Retired);
+  search + filters by tier, size, status, event, brand.
+- Calendar, Returns, Consignors, Finances, Customers — coming next.
 
-## Learn More
+## Access
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The whole app sits behind a password gate (`APP_PASSWORD` env var on Vercel).
+To change the password: update the env var and redeploy.
