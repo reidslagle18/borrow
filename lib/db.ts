@@ -82,6 +82,17 @@ async function createSchema(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS payouts (
+      id SERIAL PRIMARY KEY,
+      consignor_id INT NOT NULL REFERENCES consignors(id) ON DELETE CASCADE,
+      amount NUMERIC(8,2) NOT NULL,
+      method TEXT,
+      notes TEXT,
+      paid_at DATE NOT NULL DEFAULT CURRENT_DATE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */

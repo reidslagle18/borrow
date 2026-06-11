@@ -81,6 +81,8 @@ export default function ItemForm({
   const [consignorId, setConsignorId] = useState<number | "">(
     item?.consignor_id ?? ""
   );
+  const [consignorQuery, setConsignorQuery] = useState("");
+  const [consignorListOpen, setConsignorListOpen] = useState(false);
   const [eventTypes, setEventTypes] = useState<string[]>(
     item?.event_types ?? []
   );
@@ -96,6 +98,24 @@ export default function ItemForm({
   const [ncName, setNcName] = useState("");
   const [ncPhone, setNcPhone] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const selectedConsignor =
+    consignors.find((c) => c.id === consignorId) ?? null;
+
+  const consignorMatches = (() => {
+    const q = consignorQuery.trim().toLowerCase();
+    if (!q) return consignors.slice(0, 8);
+    return consignors
+      .filter(
+        (c) =>
+          c.name.toLowerCase().includes(q) ||
+          (c.phone ?? "")
+            .replace(/\D/g, "")
+            .includes(q.replace(/\D/g, "") || " ") ||
+          (c.email ?? "").toLowerCase().includes(q)
+      )
+      .slice(0, 8);
+  })();
 
   function pickTier(t: Tier) {
     const prevDefault = TIERS.find((x) => x.value === tier)?.price;
@@ -395,31 +415,89 @@ export default function ItemForm({
             {ownership === "consignment" && (
               <div className="rounded-2xl bg-blush/20 p-3.5">
                 <label className={labelCls}>Consignor *</label>
-                <select
-                  className={inputCls}
-                  value={consignorId}
-                  onChange={(e) =>
-                    setConsignorId(
-                      e.target.value === "" ? "" : Number(e.target.value)
-                    )
-                  }
-                >
-                  <option value="">Select consignor</option>
-                  {consignors.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-                {!showNewConsignor ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowNewConsignor(true)}
-                    className="mt-2 text-xs uppercase tracking-widest text-ink/50 underline-offset-2 hover:underline"
-                  >
-                    + New consignor
-                  </button>
+                {selectedConsignor ? (
+                  <div className="flex items-center justify-between rounded-xl border border-ink/15 bg-white px-3.5 py-2.5">
+                    <span className="truncate text-[15px]">
+                      {selectedConsignor.name}
+                      {selectedConsignor.phone && (
+                        <span className="text-ink/50">
+                          {" "}
+                          · {selectedConsignor.phone}
+                        </span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConsignorId("");
+                        setConsignorQuery("");
+                      }}
+                      className="ml-2 shrink-0 rounded-full px-2 text-lg leading-none text-ink/40 hover:bg-ink/5"
+                      aria-label="Clear consignor"
+                    >
+                      ×
+                    </button>
+                  </div>
                 ) : (
+                  <div className="relative">
+                    <input
+                      className={inputCls}
+                      placeholder="Search name or phone…"
+                      value={consignorQuery}
+                      onChange={(e) => {
+                        setConsignorQuery(e.target.value);
+                        setConsignorListOpen(true);
+                      }}
+                      onFocus={() => setConsignorListOpen(true)}
+                      onBlur={() =>
+                        setTimeout(() => setConsignorListOpen(false), 150)
+                      }
+                    />
+                    {consignorListOpen && (
+                      <div className="absolute z-10 mt-1.5 max-h-56 w-full overflow-y-auto rounded-xl border border-ink/10 bg-white shadow-lg">
+                        {consignorMatches.map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setConsignorId(c.id);
+                              setConsignorListOpen(false);
+                            }}
+                            className="block w-full px-3.5 py-2.5 text-left text-[15px] hover:bg-cream"
+                          >
+                            {c.name}
+                            {c.phone && (
+                              <span className="text-ink/45"> · {c.phone}</span>
+                            )}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            setNcName(consignorQuery.trim());
+                            setShowNewConsignor(true);
+                            setConsignorListOpen(false);
+                          }}
+                          className="block w-full border-t border-ink/10 px-3.5 py-2.5 text-left text-[15px] text-ink/60 hover:bg-cream"
+                        >
+                          + New consignor
+                          {consignorQuery.trim()
+                            ? ` “${consignorQuery.trim()}”`
+                            : ""}
+                        </button>
+                        {consignorMatches.length === 0 &&
+                          consignorQuery.trim() && (
+                            <p className="px-3.5 pb-2.5 pt-1 text-[13px] text-ink/40">
+                              No one matches “{consignorQuery.trim()}”.
+                            </p>
+                          )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {showNewConsignor && (
                   <div className="mt-3 space-y-2">
                     <input
                       className={inputCls}

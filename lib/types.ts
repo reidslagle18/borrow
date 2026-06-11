@@ -34,7 +34,19 @@ export interface Item {
   created_at: string;
 }
 
+/** Consignors earn 60% of each completed rental; BORROW keeps 40%. */
+export const CONSIGNOR_SHARE = 0.6;
+
 export type RentalStatus = "reserved" | "active" | "completed" | "cancelled";
+
+export interface Payout {
+  id: number;
+  consignor_id: number;
+  amount: number;
+  method: string | null;
+  notes: string | null;
+  paid_at: string;
+}
 
 export interface Customer {
   id: number;

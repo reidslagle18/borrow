@@ -25,6 +25,35 @@ export async function PATCH(request: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const b = await request.json();
 
+  if (b.action === "return_to_consignor") {
+    const live = await sql`
+      SELECT id FROM rentals
+      WHERE item_id = ${id} AND status IN ('reserved','active')
+    `;
+    if (live.length > 0) {
+      return NextResponse.json(
+        { error: "This piece has live bookings — cancel or complete them first" },
+        { status: 400 }
+      );
+    }
+    const rows = await sql`
+      UPDATE items SET
+        status = 'retired',
+        condition_notes = COALESCE(condition_notes || E'\n', '') ||
+          '[' || CURRENT_DATE || '] Returned to consignor',
+        updated_at = now()
+      WHERE id = ${id} AND ownership = 'consignment'
+      RETURNING *
+    `;
+    if (rows.length === 0) {
+      return NextResponse.json(
+        { error: "Only consignment pieces can be returned to a consignor" },
+        { status: 400 }
+      );
+    }
+    return NextResponse.json(rows[0]);
+  }
+
   if (b.action === "rack") {
     const rows = await sql`
       UPDATE items SET status = CASE
