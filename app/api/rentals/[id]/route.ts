@@ -38,6 +38,63 @@ export async function PATCH(request: Request, ctx: Ctx) {
       UPDATE items SET status = 'rented', rental_count = rental_count + 1, updated_at = now()
       WHERE id = ${rental.item_id}
     `;
+  } else if (b.action === "return") {
+    if (rental.status !== "active") {
+      return NextResponse.json(
+        { error: "Only pieces that are out can be checked in" },
+        { status: 400 }
+      );
+    }
+    const returnedDate: string = b.returned_date;
+    if (!returnedDate) {
+      return NextResponse.json(
+        { error: "returned_date is required" },
+        { status: 400 }
+      );
+    }
+    const due = String(rental.due_date).slice(0, 10);
+    const daysLate = Math.max(
+      0,
+      Math.round(
+        (Date.parse(returnedDate) - Date.parse(due)) / 86_400_000
+      )
+    );
+    // $15/day past the rental window — owner can override (e.g. waive it)
+    const lateFee =
+      b.late_fee != null && b.late_fee !== ""
+        ? Math.max(0, Number(b.late_fee))
+        : daysLate * 15;
+    const damaged = !!b.damaged;
+    const damageNote: string = (b.damage_note || "").trim();
+
+    await sql`
+      UPDATE rentals SET
+        status = 'completed',
+        returned_date = ${returnedDate},
+        late_fee = ${lateFee},
+        damaged = ${damaged},
+        notes = ${
+          damageNote
+            ? (rental.notes ? rental.notes + " · " : "") + "Damage: " + damageNote
+            : rental.notes
+        },
+        updated_at = now()
+      WHERE id = ${id}
+    `;
+    // Every return goes through cleaning before it's back on the rack
+    await sql`
+      UPDATE items SET status = 'cleaning', updated_at = now()
+      WHERE id = ${rental.item_id}
+    `;
+    if (damaged && damageNote) {
+      await sql`
+        UPDATE items SET
+          condition_notes = COALESCE(condition_notes || E'\n', '') ||
+            '[' || ${returnedDate} || '] Damage: ' || ${damageNote},
+          updated_at = now()
+        WHERE id = ${rental.item_id}
+      `;
+    }
   } else if (b.action === "cancel") {
     if (rental.status === "completed") {
       return NextResponse.json(

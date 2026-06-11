@@ -8,6 +8,19 @@ export async function GET(request: Request) {
   const from = searchParams.get("from");
   const to = searchParams.get("to");
 
+  if (searchParams.get("recent") === "1") {
+    const rows = await sql`
+      SELECT r.*, c.name AS customer_name, i.brand, i.size, i.color, i.photo_url
+      FROM rentals r
+      LEFT JOIN customers c ON c.id = r.customer_id
+      JOIN items i ON i.id = r.item_id
+      WHERE r.status = 'completed'
+      ORDER BY r.returned_date DESC, r.updated_at DESC
+      LIMIT 10
+    `;
+    return NextResponse.json(rows);
+  }
+
   // Everything live (reserved/active) plus anything overlapping the window.
   const rows =
     from && to

@@ -19,10 +19,30 @@ export async function GET(_req: Request, ctx: Ctx) {
 }
 
 // Full update — the edit form always sends the complete item.
+// Exception: { action: "rack" } puts a cleaned piece back in rotation.
 export async function PATCH(request: Request, ctx: Ctx) {
   await ensureSchema();
   const { id } = await ctx.params;
   const b = await request.json();
+
+  if (b.action === "rack") {
+    const rows = await sql`
+      UPDATE items SET status = CASE
+        WHEN EXISTS (SELECT 1 FROM rentals WHERE item_id = ${id} AND status = 'active') THEN 'rented'
+        WHEN EXISTS (SELECT 1 FROM rentals WHERE item_id = ${id} AND status = 'reserved') THEN 'reserved'
+        ELSE 'available'
+      END, updated_at = now()
+      WHERE id = ${id} AND status = 'cleaning'
+      RETURNING *
+    `;
+    if (rows.length === 0) {
+      return NextResponse.json(
+        { error: "Only pieces in cleaning can go back on the rack" },
+        { status: 400 }
+      );
+    }
+    return NextResponse.json(rows[0]);
+  }
 
   if (!b.brand || !b.size || !b.tier || b.rental_price == null) {
     return NextResponse.json(
