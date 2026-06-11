@@ -60,6 +60,8 @@ async function createSchema(): Promise<void> {
       instagram TEXT,
       flag TEXT CHECK (flag IN ('vip','problem')),
       notes TEXT,
+      account_token TEXT UNIQUE,
+      account_created_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
