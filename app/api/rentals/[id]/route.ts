@@ -52,7 +52,8 @@ export async function PATCH(request: Request, ctx: Ctx) {
         { status: 400 }
       );
     }
-    const due = String(rental.due_date).slice(0, 10);
+    // due_date may arrive as a JS Date or a string depending on the driver
+    const due = new Date(rental.due_date).toISOString().slice(0, 10);
     const daysLate = Math.max(
       0,
       Math.round(
