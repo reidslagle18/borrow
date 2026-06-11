@@ -37,13 +37,25 @@ export default function CalendarPage() {
 
   const today = todayISO();
 
+  // Load bookings for the visible month — and keep them fresh so rentals
+  // made from the customer site show up without a manual reload.
   useEffect(() => {
     const { from, to } = monthRange(cursor);
-    (async () => {
+    let alive = true;
+    async function load() {
       const res = await fetch(`/api/rentals?from=${from}&to=${to}`);
-      if (res.ok) setRentals(await res.json());
-      setLoaded(true);
-    })();
+      if (res.ok && alive) setRentals(await res.json());
+      if (alive) setLoaded(true);
+    }
+    load();
+    const interval = setInterval(load, 60_000);
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      alive = false;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [cursor]);
 
   useEffect(() => {

@@ -14,7 +14,11 @@ export async function proxy(request: NextRequest) {
   if (!process.env.APP_PASSWORD) return NextResponse.next();
 
   const { pathname } = request.nextUrl;
-  if (pathname === "/login" || pathname === "/api/login") {
+  if (
+    pathname === "/login" ||
+    pathname === "/api/login" ||
+    pathname.startsWith("/api/public/") // customer-site endpoints carry their own auth
+  ) {
     return NextResponse.next();
   }
 

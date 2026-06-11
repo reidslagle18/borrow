@@ -76,6 +76,7 @@ async function createSchema(): Promise<void> {
       damage_waiver BOOLEAN NOT NULL DEFAULT false,
       late_fee NUMERIC(8,2) NOT NULL DEFAULT 0,
       damaged BOOLEAN NOT NULL DEFAULT false,
+      source TEXT NOT NULL DEFAULT 'studio',
       notes TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
