@@ -25,6 +25,7 @@ async function createSchema(): Promise<void> {
       email TEXT,
       phone TEXT,
       notes TEXT,
+      portal_code TEXT UNIQUE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;

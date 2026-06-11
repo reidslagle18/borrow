@@ -15,6 +15,7 @@ type ConsignorRow = Consignor & {
   earned: number;
   paid: number;
   owed: number;
+  portal_code?: string | null;
 };
 
 type ConsignorDetail = ConsignorRow & {
@@ -211,6 +212,19 @@ function DetailModal({
                 </p>
                 {detail.notes && (
                   <p className="mt-1 text-sm text-ink/45">{detail.notes}</p>
+                )}
+                {detail.portal_code && (
+                  <button
+                    onClick={() =>
+                      navigator.clipboard?.writeText(
+                        `Check on your BORROW pieces anytime: borrow-shop.vercel.app/portal — your access code is ${detail.portal_code}`
+                      )
+                    }
+                    className="mt-2 rounded-full bg-lavender/50 px-3 py-1.5 text-[12px] tracking-wide"
+                    title="Tap to copy an invite message"
+                  >
+                    Portal code: <span className="font-medium">{detail.portal_code}</span> · tap to copy invite
+                  </button>
                 )}
               </div>
               <div className="flex shrink-0 gap-1">
