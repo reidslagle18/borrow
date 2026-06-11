@@ -8,8 +8,8 @@ const NAV = [
   { href: "/calendar", label: "Calendar", ready: true },
   { href: "/returns", label: "Returns", ready: true },
   { href: "/consignors", label: "Consignors", ready: true },
-  { href: "/finances", label: "Finances", ready: false },
-  { href: "/customers", label: "Customers", ready: false },
+  { href: "/finances", label: "Finances", ready: true },
+  { href: "/customers", label: "Customers", ready: true },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
