@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import ItemForm from "@/components/ItemForm";
 import {
@@ -98,10 +99,6 @@ export default function InventoryPage() {
 
   function openAdd() {
     setEditingItem(null);
-    setFormOpen(true);
-  }
-  function openEdit(item: Item) {
-    setEditingItem(item);
     setFormOpen(true);
   }
   function handleSaved(saved: Item) {
@@ -275,9 +272,9 @@ export default function InventoryPage() {
         ) : (
           <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {filtered.map((item) => (
-              <button
+              <Link
                 key={item.id}
-                onClick={() => openEdit(item)}
+                href={`/inventory/${encodeURIComponent(item.barcode || item.id)}`}
                 className="group text-left"
               >
                 <div className="relative aspect-[3/4] overflow-hidden rounded-2xl bg-white">
@@ -317,12 +314,13 @@ export default function InventoryPage() {
                     </span>
                   </div>
                   <p className="mt-0.5 text-[13px] text-ink/50">
-                    {item.id} · {item.size}
+                    <span className="font-mono">{item.barcode || item.id}</span> ·{" "}
+                    {item.size}
                     {item.color ? ` · ${item.color}` : ""} ·{" "}
                     {tierLabel(item.tier)}
                   </p>
                 </div>
-              </button>
+              </Link>
             ))}
           </div>
         )}

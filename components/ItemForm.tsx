@@ -12,6 +12,8 @@ import {
   SIZES,
   EVENT_TYPES,
   STATUSES,
+  OWNERSHIPS,
+  SILHOUETTES,
 } from "@/lib/types";
 
 /** Downscale a photo client-side so iPad camera shots upload fast. */
@@ -62,16 +64,28 @@ export default function ItemForm({
   onConsignorAdded: (c: Consignor) => void;
 }) {
   const editing = !!item;
+  const [barcode, setBarcode] = useState(item?.barcode ?? "");
   const [brand, setBrand] = useState(item?.brand ?? "");
+  const [description, setDescription] = useState(item?.description ?? "");
   const [size, setSize] = useState(item?.size ?? "");
   const [color, setColor] = useState(item?.color ?? "");
+  const [fabric, setFabric] = useState(item?.fabric ?? "");
+  const [fitNotes, setFitNotes] = useState(item?.fit_notes ?? "");
+  const [silhouette, setSilhouette] = useState(item?.silhouette ?? "");
   const [tier, setTier] = useState<Tier>(item?.tier ?? "standard");
   const [rentalPrice, setRentalPrice] = useState<string>(
-    item ? String(item.rental_price) : "45"
+    item ? String(item.rental_price) : "35"
   );
   const [purchaseCost, setPurchaseCost] = useState<string>(
     item?.purchase_cost != null ? String(item.purchase_cost) : ""
   );
+  const [retailValue, setRetailValue] = useState<string>(
+    item?.retail_value != null ? String(item.retail_value) : ""
+  );
+  const [acquisitionDate, setAcquisitionDate] = useState(
+    item?.acquisition_date ?? ""
+  );
+  const [source, setSource] = useState(item?.source ?? "");
   const [conditionNotes, setConditionNotes] = useState(
     item?.condition_notes ?? ""
   );
@@ -87,8 +101,9 @@ export default function ItemForm({
     item?.event_types ?? []
   );
   const [status, setStatus] = useState<ItemStatus>(item?.status ?? "available");
-  const [photoUrl, setPhotoUrl] = useState<string | null>(
-    item?.photo_url ?? null
+  const [location, setLocation] = useState(item?.location ?? "");
+  const [photos, setPhotos] = useState<string[]>(
+    item?.photos?.length ? item.photos : item?.photo_url ? [item.photo_url] : []
   );
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -127,22 +142,32 @@ export default function ItemForm({
     }
   }
 
-  async function handlePhoto(file: File) {
+  async function handlePhotos(files: FileList) {
     setUploading(true);
     setError("");
     try {
-      const resized = await resizeImage(file);
-      const blob = await upload(
-        `items/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, "_")}`,
-        resized,
-        { access: "public", handleUploadUrl: "/api/upload", contentType: "image/jpeg" }
-      );
-      setPhotoUrl(blob.url);
+      for (const file of Array.from(files)) {
+        const resized = await resizeImage(file);
+        const blob = await upload(
+          `items/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, "_")}`,
+          resized,
+          { access: "public", handleUploadUrl: "/api/upload", contentType: "image/jpeg" }
+        );
+        setPhotos((prev) => [...prev, blob.url]);
+      }
     } catch {
       setError("Photo upload failed — try again.");
     } finally {
       setUploading(false);
     }
+  }
+
+  function removePhoto(url: string) {
+    setPhotos((prev) => prev.filter((p) => p !== url));
+  }
+
+  function makeCover(url: string) {
+    setPhotos((prev) => [url, ...prev.filter((p) => p !== url)]);
   }
 
   async function addConsignor() {
@@ -163,8 +188,8 @@ export default function ItemForm({
   }
 
   async function save() {
-    if (!brand.trim() || !size || rentalPrice === "") {
-      setError("Brand, size and rental price are required.");
+    if (!barcode.trim() || !brand.trim() || !size || rentalPrice === "") {
+      setError("Barcode, brand, size and rental price are required.");
       return;
     }
     if (ownership === "consignment" && consignorId === "") {
@@ -174,18 +199,28 @@ export default function ItemForm({
     setSaving(true);
     setError("");
     const payload = {
+      barcode: barcode.trim(),
       brand: brand.trim(),
+      description: description.trim(),
       size,
       color: color.trim(),
+      fabric: fabric.trim(),
+      fit_notes: fitNotes.trim(),
+      silhouette: silhouette || null,
       tier,
       rental_price: Number(rentalPrice),
       purchase_cost: purchaseCost === "" ? null : Number(purchaseCost),
+      retail_value: retailValue === "" ? null : Number(retailValue),
+      acquisition_date: acquisitionDate || null,
+      source: source.trim(),
       condition_notes: conditionNotes.trim(),
       ownership,
       consignor_id: consignorId === "" ? null : consignorId,
       event_types: eventTypes,
       status,
-      photo_url: photoUrl,
+      location: location.trim(),
+      photo_url: photos[0] ?? null,
+      photos,
     };
     const res = await fetch(editing ? `/api/items/${item!.id}` : "/api/items", {
       method: editing ? "PATCH" : "POST",
@@ -237,7 +272,8 @@ export default function ItemForm({
             </h2>
             {editing && (
               <p className="mt-1 text-sm tracking-wide text-ink/50">
-                {item!.id} · rented {item!.rental_count}×
+                <span className="font-mono">{item!.barcode || item!.id}</span> ·
+                rented {item!.rental_count}×
               </p>
             )}
           </div>
@@ -251,52 +287,84 @@ export default function ItemForm({
         </div>
 
         <div className="grid gap-5 sm:grid-cols-[200px_1fr]">
-          {/* Photo */}
+          {/* Photos */}
           <div>
-            <span className={labelCls}>Photo</span>
+            <span className={labelCls}>Photos</span>
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
               className="relative block aspect-[3/4] w-full overflow-hidden rounded-2xl border border-dashed border-ink/20 bg-white"
             >
-              {photoUrl ? (
+              {photos[0] ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={photoUrl}
-                  alt="Item"
+                  src={photos[0]}
+                  alt="Item cover"
                   className="h-full w-full object-cover"
                 />
               ) : (
                 <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-ink/40">
                   <span className="font-serif text-4xl italic">+</span>
                   <span className="text-xs uppercase tracking-widest">
-                    {uploading ? "Uploading…" : "Add photo"}
+                    {uploading ? "Uploading…" : "Add photos"}
                   </span>
                 </span>
               )}
-              {uploading && photoUrl && (
+              {uploading && (
                 <span className="absolute inset-0 flex items-center justify-center bg-cream/70 text-sm">
                   Uploading…
                 </span>
               )}
+              {photos[0] && (
+                <span className="absolute left-2 top-2 rounded-full bg-ink/70 px-2 py-0.5 text-[10px] uppercase tracking-wider text-cream">
+                  Cover
+                </span>
+              )}
             </button>
-            {photoUrl && (
-              <button
-                type="button"
-                onClick={() => setPhotoUrl(null)}
-                className="mt-2 text-xs uppercase tracking-widest text-ink/40 underline-offset-2 hover:underline"
-              >
-                Remove photo
-              </button>
+            {photos.length > 0 && (
+              <div className="mt-2 grid grid-cols-3 gap-1.5">
+                {photos.map((url) => (
+                  <div
+                    key={url}
+                    className="group relative aspect-square overflow-hidden rounded-lg border border-ink/10 bg-white"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={url}
+                      alt="Item"
+                      className="h-full w-full object-cover"
+                    />
+                    <div className="absolute inset-0 flex items-end justify-between gap-1 bg-gradient-to-t from-ink/60 to-transparent p-1 opacity-0 transition-opacity group-hover:opacity-100">
+                      {photos[0] !== url && (
+                        <button
+                          type="button"
+                          onClick={() => makeCover(url)}
+                          className="rounded bg-cream/90 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-ink"
+                        >
+                          Cover
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removePhoto(url)}
+                        className="ml-auto rounded bg-cream/90 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-blush-deep"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
             <input
               ref={fileRef}
               type="file"
               accept="image/*"
+              multiple
               className="hidden"
               onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) handlePhoto(f);
+                const f = e.target.files;
+                if (f && f.length) handlePhotos(f);
                 e.target.value = "";
               }}
             />
@@ -304,6 +372,17 @@ export default function ItemForm({
 
           {/* Fields */}
           <div className="space-y-4">
+            <div>
+              <label className={labelCls}>Barcode ID *</label>
+              <input
+                className={`${inputCls} font-mono tracking-wide`}
+                value={barcode}
+                onChange={(e) => setBarcode(e.target.value)}
+                placeholder="Scan or type — e.g. 0123456789"
+                autoFocus={!editing}
+              />
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2 sm:col-span-1">
                 <label className={labelCls}>Brand *</label>
@@ -330,7 +409,7 @@ export default function ItemForm({
                 </select>
               </div>
               <div>
-                <label className={labelCls}>Color</label>
+                <label className={labelCls}>Color(s)</label>
                 <input
                   className={inputCls}
                   value={color}
@@ -338,17 +417,63 @@ export default function ItemForm({
                   placeholder="Dusty pink"
                 />
               </div>
+              <div>
+                <label className={labelCls}>Silhouette</label>
+                <select
+                  className={inputCls}
+                  value={silhouette}
+                  onChange={(e) => setSilhouette(e.target.value)}
+                >
+                  <option value="">Select</option>
+                  {SILHOUETTES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className={labelCls}>Description</label>
+              <textarea
+                className={`${inputCls} min-h-16 resize-y`}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Strappy silk slip with cowl neck."
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>Fabric</label>
+                <input
+                  className={inputCls}
+                  value={fabric}
+                  onChange={(e) => setFabric(e.target.value)}
+                  placeholder="100% silk"
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Fit notes</label>
+                <input
+                  className={inputCls}
+                  value={fitNotes}
+                  onChange={(e) => setFitNotes(e.target.value)}
+                  placeholder="Runs small; true XS"
+                />
+              </div>
             </div>
 
             <div>
               <label className={labelCls}>Tier</label>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {TIERS.map((t) => (
                   <button
                     key={t.value}
                     type="button"
                     onClick={() => pickTier(t.value)}
-                    className={`flex-1 rounded-full border px-3 py-2 text-sm transition-colors ${
+                    className={`flex-1 whitespace-nowrap rounded-full border px-3 py-2 text-sm transition-colors ${
                       tier === t.value
                         ? "border-ink bg-ink text-cream"
                         : "border-ink/15 bg-white text-ink/70"
@@ -360,7 +485,7 @@ export default function ItemForm({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className={labelCls}>Rental price ($) *</label>
                 <input
@@ -372,7 +497,7 @@ export default function ItemForm({
                 />
               </div>
               <div>
-                <label className={labelCls}>Purchase cost ($)</label>
+                <label className={labelCls}>Acq. cost ($)</label>
                 <input
                   type="number"
                   inputMode="decimal"
@@ -382,33 +507,57 @@ export default function ItemForm({
                   placeholder="—"
                 />
               </div>
+              <div>
+                <label className={labelCls}>Retail value ($)</label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  className={inputCls}
+                  value={retailValue}
+                  onChange={(e) => setRetailValue(e.target.value)}
+                  placeholder="—"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>Acquisition date</label>
+                <input
+                  type="date"
+                  className={inputCls}
+                  value={acquisitionDate}
+                  onChange={(e) => setAcquisitionDate(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>Source</label>
+                <input
+                  className={inputCls}
+                  value={source}
+                  onChange={(e) => setSource(e.target.value)}
+                  placeholder="Boutique, donor, sample sale…"
+                />
+              </div>
             </div>
 
             <div>
               <label className={labelCls}>Ownership</label>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setOwnership("owned")}
-                  className={`flex-1 rounded-full border px-3 py-2 text-sm ${
-                    ownership === "owned"
-                      ? "border-ink bg-ink text-cream"
-                      : "border-ink/15 bg-white text-ink/70"
-                  }`}
-                >
-                  BORROW owns it
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOwnership("consignment")}
-                  className={`flex-1 rounded-full border px-3 py-2 text-sm ${
-                    ownership === "consignment"
-                      ? "border-ink bg-ink text-cream"
-                      : "border-ink/15 bg-white text-ink/70"
-                  }`}
-                >
-                  Consignment
-                </button>
+                {OWNERSHIPS.map((o) => (
+                  <button
+                    key={o.value}
+                    type="button"
+                    onClick={() => setOwnership(o.value)}
+                    className={`flex-1 rounded-full border px-3 py-2 text-sm ${
+                      ownership === o.value
+                        ? "border-ink bg-ink text-cream"
+                        : "border-ink/15 bg-white text-ink/70"
+                    }`}
+                  >
+                    {o.label}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -552,25 +701,36 @@ export default function ItemForm({
               </div>
             </div>
 
-            {editing && (
-              <div>
-                <label className={labelCls}>Status</label>
-                <select
+            <div className="grid grid-cols-2 gap-3">
+              {editing && (
+                <div>
+                  <label className={labelCls}>Status</label>
+                  <select
+                    className={inputCls}
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value as ItemStatus)}
+                  >
+                    {STATUSES.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div className={editing ? "" : "col-span-2"}>
+                <label className={labelCls}>Current location</label>
+                <input
                   className={inputCls}
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as ItemStatus)}
-                >
-                  {STATUSES.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  placeholder="Studio rack A, with customer, cleaner…"
+                />
               </div>
-            )}
+            </div>
 
             <div>
-              <label className={labelCls}>Condition notes</label>
+              <label className={labelCls}>Condition / damage notes</label>
               <textarea
                 className={`${inputCls} min-h-20 resize-y`}
                 value={conditionNotes}
@@ -578,6 +738,16 @@ export default function ItemForm({
                 placeholder="Tiny pull near left strap, otherwise perfect."
               />
             </div>
+
+            {editing && (
+              <p className="text-xs text-ink/40">
+                Rented {item!.rental_count}× · cleaned {item!.cleaning_count}× ·
+                added {new Date(item!.created_at).toLocaleDateString()}
+                {item!.retired_at
+                  ? ` · retired ${new Date(item!.retired_at).toLocaleDateString()}`
+                  : ""}
+              </p>
+            )}
           </div>
         </div>
 

@@ -1,5 +1,5 @@
-export type Tier = "standard" | "mid" | "premium";
-export type Ownership = "owned" | "consignment";
+export type Tier = "standard" | "mid" | "high" | "premium";
+export type Ownership = "owned" | "consignment" | "ambassador";
 export type ItemStatus =
   | "available"
   | "reserved"
@@ -17,21 +17,33 @@ export interface Consignor {
 
 export interface Item {
   id: string;
+  barcode: string;
   brand: string;
+  description: string | null;
   size: string;
   color: string | null;
+  fabric: string | null;
+  fit_notes: string | null;
+  silhouette: string | null;
   tier: Tier;
   rental_price: number;
-  purchase_cost: number | null;
-  condition_notes: string | null;
+  purchase_cost: number | null; // acquisition cost
+  retail_value: number | null; // retail / replacement value
+  acquisition_date: string | null; // YYYY-MM-DD
+  source: string | null;
+  condition_notes: string | null; // condition / damage notes
   ownership: Ownership;
   consignor_id: number | null;
   consignor_name?: string | null;
   event_types: string[];
   status: ItemStatus;
-  photo_url: string | null;
+  location: string | null;
+  photo_url: string | null; // cover photo (first of photos)
+  photos: string[];
   rental_count: number;
-  created_at: string;
+  cleaning_count: number;
+  created_at: string; // date added
+  retired_at: string | null; // date retired
 }
 
 /** Consignors earn 60% of each completed rental; BORROW keeps 40%. */
@@ -80,9 +92,16 @@ export interface Rental {
 }
 
 export const TIERS: { value: Tier; label: string; price: number }[] = [
-  { value: "standard", label: "Standard", price: 45 },
-  { value: "mid", label: "Mid", price: 65 },
+  { value: "standard", label: "Standard", price: 35 },
+  { value: "mid", label: "Mid", price: 45 },
+  { value: "high", label: "High", price: 65 },
   { value: "premium", label: "Premium", price: 85 },
+];
+
+export const OWNERSHIPS: { value: Ownership; label: string }[] = [
+  { value: "owned", label: "Owned" },
+  { value: "consignment", label: "Consigned" },
+  { value: "ambassador", label: "Ambassador" },
 ];
 
 export const STATUSES: { value: ItemStatus; label: string }[] = [
@@ -112,13 +131,28 @@ export const SIZES = [
 
 export const EVENT_TYPES = [
   "Formal",
-  "Semi-Formal",
   "Date Party",
-  "Game Day",
   "Rush",
+  "Game Day",
   "Graduation",
   "Wedding Guest",
+  "Semi-Formal",
   "Night Out",
+];
+
+export const SILHOUETTES = [
+  "Mini Dress",
+  "Midi Dress",
+  "Maxi Dress",
+  "Gown",
+  "Two-Piece",
+  "Top",
+  "Skirt",
+  "Pants",
+  "Jumpsuit",
+  "Co-ord",
+  "Outerwear",
+  "Accessory",
 ];
 
 export function tierLabel(tier: Tier): string {
@@ -127,4 +161,8 @@ export function tierLabel(tier: Tier): string {
 
 export function statusLabel(status: ItemStatus): string {
   return STATUSES.find((s) => s.value === status)?.label ?? status;
+}
+
+export function ownershipLabel(ownership: Ownership): string {
+  return OWNERSHIPS.find((o) => o.value === ownership)?.label ?? ownership;
 }

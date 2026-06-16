@@ -33,24 +33,67 @@ async function createSchema(): Promise<void> {
   await sql`
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
+      barcode TEXT,
       brand TEXT NOT NULL,
+      description TEXT,
       size TEXT NOT NULL,
       color TEXT,
-      tier TEXT NOT NULL CHECK (tier IN ('standard','mid','premium')),
+      fabric TEXT,
+      fit_notes TEXT,
+      silhouette TEXT,
+      tier TEXT NOT NULL CHECK (tier IN ('standard','mid','high','premium')),
       rental_price NUMERIC(8,2) NOT NULL,
       purchase_cost NUMERIC(8,2),
+      retail_value NUMERIC(8,2),
+      acquisition_date DATE,
+      source TEXT,
       condition_notes TEXT,
-      ownership TEXT NOT NULL CHECK (ownership IN ('owned','consignment')),
+      ownership TEXT NOT NULL CHECK (ownership IN ('owned','consignment','ambassador')),
       consignor_id INT REFERENCES consignors(id),
       event_types TEXT[] NOT NULL DEFAULT '{}',
       status TEXT NOT NULL DEFAULT 'available'
         CHECK (status IN ('available','reserved','rented','cleaning','retired')),
+      location TEXT,
       photo_url TEXT,
+      photos TEXT[] NOT NULL DEFAULT '{}',
       rental_count INT NOT NULL DEFAULT 0,
+      cleaning_count INT NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      retired_at DATE,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+  // --- Additive migrations for the expanded piece model ---
+  // Safe to run on every boot: ADD COLUMN IF NOT EXISTS is idempotent and
+  // leaves existing rows untouched. Keeps the BRW-xxxx `id` as the PK so
+  // existing rentals.item_id foreign keys stay intact.
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS barcode TEXT`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS description TEXT`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS fabric TEXT`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS fit_notes TEXT`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS silhouette TEXT`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS location TEXT`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS source TEXT`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS acquisition_date DATE`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS retail_value NUMERIC(8,2)`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS cleaning_count INT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS retired_at DATE`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS photos TEXT[] NOT NULL DEFAULT '{}'`;
+
+  // Allow the new tier ('high') and ownership ('ambassador') values by
+  // relaxing the original CHECK constraints (Postgres default names).
+  await sql`ALTER TABLE items DROP CONSTRAINT IF EXISTS items_tier_check`;
+  await sql`ALTER TABLE items ADD CONSTRAINT items_tier_check
+    CHECK (tier IN ('standard','mid','high','premium'))`;
+  await sql`ALTER TABLE items DROP CONSTRAINT IF EXISTS items_ownership_check`;
+  await sql`ALTER TABLE items ADD CONSTRAINT items_ownership_check
+    CHECK (ownership IN ('owned','consignment','ambassador'))`;
+
+  // Barcode is the scannable identifier — unique where present. Partial index
+  // so legacy rows without a barcode don't collide on NULL.
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS items_barcode_key
+    ON items(barcode) WHERE barcode IS NOT NULL`;
+
   await sql`
     CREATE TABLE IF NOT EXISTS customers (
       id SERIAL PRIMARY KEY,
