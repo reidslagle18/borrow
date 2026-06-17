@@ -114,6 +114,8 @@ export default function ItemForm({
   const [showNewConsignor, setShowNewConsignor] = useState(false);
   const [ncName, setNcName] = useState("");
   const [ncPhone, setNcPhone] = useState("");
+  const [ncEmail, setNcEmail] = useState("");
+  const [ncError, setNcError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const barcodeRef = useRef<HTMLInputElement>(null);
   const [scanOpen, setScanOpen] = useState(false);
@@ -185,11 +187,21 @@ export default function ItemForm({
   }
 
   async function addConsignor() {
-    if (!ncName.trim()) return;
+    // Email + phone are required so the consignor can log into the portal
+    // (login matches on email + phone) and be notified when a piece rents.
+    if (!ncName.trim() || !ncEmail.trim() || !ncPhone.trim()) {
+      setNcError("Name, email and phone are all required for a consignor.");
+      return;
+    }
+    setNcError("");
     const res = await fetch("/api/consignors", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: ncName.trim(), phone: ncPhone.trim() }),
+      body: JSON.stringify({
+        name: ncName.trim(),
+        phone: ncPhone.trim(),
+        email: ncEmail.trim(),
+      }),
     });
     if (res.ok) {
       const c: Consignor = await res.json();
@@ -198,6 +210,9 @@ export default function ItemForm({
       setShowNewConsignor(false);
       setNcName("");
       setNcPhone("");
+      setNcEmail("");
+    } else {
+      setNcError("Couldn't add consignor — try again.");
     }
   }
 
@@ -679,11 +694,25 @@ export default function ItemForm({
                       onChange={(e) => setNcName(e.target.value)}
                     />
                     <input
+                      type="email"
                       className={inputCls}
-                      placeholder="Phone (optional)"
+                      placeholder="Email (for portal login + payouts)"
+                      value={ncEmail}
+                      onChange={(e) => setNcEmail(e.target.value)}
+                    />
+                    <input
+                      className={inputCls}
+                      placeholder="Phone (for portal login)"
                       value={ncPhone}
                       onChange={(e) => setNcPhone(e.target.value)}
                     />
+                    <p className="text-[12px] text-ink/45">
+                      Consignors log into the portal with their email + phone, so
+                      both are required.
+                    </p>
+                    {ncError && (
+                      <p className="text-[13px] text-blush-deep">{ncError}</p>
+                    )}
                     <div className="flex gap-2">
                       <button
                         type="button"

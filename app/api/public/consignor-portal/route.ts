@@ -15,18 +15,41 @@ export async function POST(request: Request) {
 
   await ensureSchema();
   const b = await request.json();
+  const email = (b.email || "").trim().toLowerCase();
+  const digits = (b.phone || "").replace(/\D/g, "");
   const code = (b.code || "").trim().toUpperCase();
-  if (!code || code.length < 6) {
-    return NextResponse.json({ error: "Enter your access code" }, { status: 400 });
-  }
 
-  const consignors = await sql`
-    SELECT id, name, phone, email FROM consignors WHERE portal_code = ${code}
-  `;
-  if (consignors.length === 0) {
+  // Primary login: email + phone must both match the same consignor (mirrors
+  // the customer account-login). Falls back to the access code if supplied
+  // (used by the "your piece rented" email deep-link).
+  let consignors;
+  if (email && digits.length >= 7) {
+    consignors = await sql`
+      SELECT id, name, phone, email FROM consignors
+      WHERE lower(email) = ${email}
+        AND regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') = ${digits}
+      LIMIT 1
+    `;
+    if (consignors.length === 0) {
+      return NextResponse.json(
+        { error: "No consignor matches that email and phone — check with BORROW" },
+        { status: 404 }
+      );
+    }
+  } else if (code && code.length >= 6) {
+    consignors = await sql`
+      SELECT id, name, phone, email FROM consignors WHERE portal_code = ${code}
+    `;
+    if (consignors.length === 0) {
+      return NextResponse.json(
+        { error: "That code doesn't match — double-check with BORROW" },
+        { status: 404 }
+      );
+    }
+  } else {
     return NextResponse.json(
-      { error: "That code doesn't match — double-check with BORROW" },
-      { status: 404 }
+      { error: "Enter your email and phone number" },
+      { status: 400 }
     );
   }
   const c = consignors[0];
