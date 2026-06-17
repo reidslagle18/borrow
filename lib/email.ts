@@ -82,7 +82,12 @@ export async function sendConsignorRentedEmail(
       subject: `Your ${d.brand} just rented — you earned ${money(d.earned)}`,
       html: consignorRentedHtml(d),
     });
-    if (error) return { sent: false, error: String(error) };
+    if (error)
+      return {
+        sent: false,
+        error:
+          typeof error === "object" ? JSON.stringify(error) : String(error),
+      };
     return { sent: true };
   } catch (err) {
     return { sent: false, error: (err as Error).message };
@@ -151,7 +156,12 @@ export async function sendReceipt(
       subject: `Your BORROW rental receipt — order #${d.transactionId}`,
       html: receiptHtml(d),
     });
-    if (error) return { sent: false, error: String(error) };
+    if (error)
+      return {
+        sent: false,
+        error:
+          typeof error === "object" ? JSON.stringify(error) : String(error),
+      };
     return { sent: true };
   } catch (err) {
     return { sent: false, error: (err as Error).message };
