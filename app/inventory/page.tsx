@@ -119,7 +119,7 @@ export default function InventoryPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-6xl px-5 py-8 md:px-10 md:py-12">
+      <div className="mx-auto max-w-6xl px-5 py-8 pb-28 md:px-10 md:py-12 md:pb-28">
         {/* Header */}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>

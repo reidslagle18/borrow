@@ -104,7 +104,7 @@ export default function PieceDetailPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-6xl px-5 py-8 md:px-10 md:py-12">
+      <div className="mx-auto max-w-6xl px-5 py-8 pb-28 md:px-10 md:py-12 md:pb-28">
         <Link
           href="/inventory"
           className="text-sm text-ink/50 underline-offset-2 hover:underline"
