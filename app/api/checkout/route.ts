@@ -131,13 +131,14 @@ export async function POST(request: Request) {
     WHERE i.id = ANY(${itemIds}) AND i.ownership = 'consignment' AND c.email IS NOT NULL
   `;
   for (const c of consigned) {
-    await sendConsignorRentedEmail({
+    const r = await sendConsignorRentedEmail({
       to: c.email,
       consignorName: c.name,
       brand: c.brand,
       earned: Math.round(Number(c.rental_price) * CONSIGNOR_SHARE * 100) / 100,
       portalCode: c.portal_code ?? null,
     });
+    console.log(`[checkout] consignor email to ${c.email}:`, JSON.stringify(r));
   }
 
   // Receipt email (best-effort; checkout already succeeded).
@@ -174,6 +175,9 @@ export async function POST(request: Request) {
       transactionId: tx.id,
     });
     emailSent = result.sent;
+    console.log(`[checkout] receipt email to ${recipient}:`, JSON.stringify(result));
+  } else {
+    console.log("[checkout] no receipt recipient (no email on customer/order)");
   }
 
   return NextResponse.json(
