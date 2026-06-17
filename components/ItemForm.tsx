@@ -1,7 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
+import CameraScanner from "./CameraScanner";
+import { beep } from "@/lib/scanSound";
 import {
   Item,
   Consignor,
@@ -113,6 +115,18 @@ export default function ItemForm({
   const [ncName, setNcName] = useState("");
   const [ncPhone, setNcPhone] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const barcodeRef = useRef<HTMLInputElement>(null);
+  const [scanOpen, setScanOpen] = useState(false);
+
+  // Focus the Barcode field as soon as the modal opens so a handheld scan
+  // (keyboard wedge) lands straight in it — no need to tap the field first.
+  useEffect(() => {
+    const el = barcodeRef.current;
+    if (el) {
+      el.focus();
+      el.select();
+    }
+  }, []);
 
   const selectedConsignor =
     consignors.find((c) => c.id === consignorId) ?? null;
@@ -257,6 +271,7 @@ export default function ItemForm({
   }
 
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-ink/40 sm:items-center sm:p-6"
       onClick={onClose}
@@ -374,13 +389,22 @@ export default function ItemForm({
           <div className="space-y-4">
             <div>
               <label className={labelCls}>Barcode ID *</label>
-              <input
-                className={`${inputCls} font-mono tracking-wide`}
-                value={barcode}
-                onChange={(e) => setBarcode(e.target.value)}
-                placeholder="Scan or type — e.g. 0123456789"
-                autoFocus={!editing}
-              />
+              <div className="flex gap-2">
+                <input
+                  ref={barcodeRef}
+                  className={`${inputCls} font-mono tracking-wide`}
+                  value={barcode}
+                  onChange={(e) => setBarcode(e.target.value)}
+                  placeholder="Scan or type — e.g. 0123456789"
+                />
+                <button
+                  type="button"
+                  onClick={() => setScanOpen(true)}
+                  className="shrink-0 rounded-xl border border-ink/15 bg-white px-4 text-[15px] text-ink/70"
+                >
+                  Camera
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -781,5 +805,19 @@ export default function ItemForm({
         </div>
       </div>
     </div>
+    {scanOpen && (
+      <CameraScanner
+        onResult={(text) => {
+          const code = text.trim();
+          if (!code) return;
+          setBarcode(code);
+          beep(true);
+          setScanOpen(false);
+          barcodeRef.current?.focus();
+        }}
+        onClose={() => setScanOpen(false)}
+      />
+    )}
+    </>
   );
 }
