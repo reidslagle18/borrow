@@ -49,6 +49,40 @@ export interface Item {
 /** Consignors earn 60% of each completed rental; BORROW keeps 40%. */
 export const CONSIGNOR_SHARE = 0.6;
 
+/** Mandatory damage waiver added to every rented piece, in dollars. */
+export const DAMAGE_WAIVER = 5;
+
+/** Standard rental window, in days. */
+export const RENTAL_DAYS = 7;
+
+/** Rental agreement terms shown at checkout and included in the receipt. */
+export const AGREEMENT_TERMS = [
+  "Pieces are rented for a 7-day window and are due back by the due date.",
+  "A $5 non-refundable damage waiver per piece covers minor wear; it does not cover loss, theft, or major damage.",
+  "Late returns are charged $15 per piece per day past the due date.",
+  "Pieces must be returned in their rented condition; the renter is responsible for loss or damage beyond normal wear.",
+];
+
+export interface Transaction {
+  id: number;
+  customer_id: number | null;
+  customer_name?: string | null;
+  piece_count: number;
+  subtotal: number;
+  waiver_total: number;
+  total: number;
+  start_date: string;
+  due_date: string;
+  payment_method: string;
+  payment_status: "collected" | "pending" | "void";
+  payment_ref: string | null;
+  agreement_accepted: boolean;
+  agreement_name: string | null;
+  agreement_accepted_at: string | null;
+  receipt_email: string | null;
+  created_at: string;
+}
+
 export type RentalStatus = "reserved" | "active" | "completed" | "cancelled";
 
 export interface Payout {

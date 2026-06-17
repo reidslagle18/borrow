@@ -139,6 +139,34 @@ async function createSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+
+  // A checkout = one transaction covering one or more pieces for a customer.
+  // Each piece also gets its own rental row (below) linked back via
+  // transaction_id, so the transaction is recorded against both the customer
+  // and every piece.
+  await sql`
+    CREATE TABLE IF NOT EXISTS transactions (
+      id SERIAL PRIMARY KEY,
+      customer_id INT REFERENCES customers(id),
+      piece_count INT NOT NULL,
+      subtotal NUMERIC(10,2) NOT NULL,
+      waiver_total NUMERIC(10,2) NOT NULL,
+      total NUMERIC(10,2) NOT NULL,
+      start_date DATE NOT NULL,
+      due_date DATE NOT NULL,
+      payment_method TEXT NOT NULL DEFAULT 'card_reader',
+      payment_status TEXT NOT NULL DEFAULT 'collected'
+        CHECK (payment_status IN ('collected','pending','void')),
+      payment_ref TEXT,
+      agreement_accepted BOOLEAN NOT NULL DEFAULT false,
+      agreement_name TEXT,
+      agreement_accepted_at TIMESTAMPTZ,
+      receipt_email TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  // Link rentals to their checkout transaction (additive; existing rows null).
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS transaction_id INT REFERENCES transactions(id)`;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */
