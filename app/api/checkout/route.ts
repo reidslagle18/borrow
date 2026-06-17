@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
-import { sendReceipt, ReceiptLine } from "@/lib/email";
-import { DAMAGE_WAIVER } from "@/lib/types";
+import { sendReceipt, sendConsignorRentedEmail, ReceiptLine } from "@/lib/email";
+import { DAMAGE_WAIVER, CONSIGNOR_SHARE } from "@/lib/types";
 
 interface CheckoutBody {
   customer_id?: number | null;
@@ -122,6 +122,22 @@ export async function POST(request: Request) {
       UPDATE items SET status = 'rented', rental_count = rental_count + 1, updated_at = now()
       WHERE id = ${item.id}
     `;
+  }
+
+  // Notify consignors whose pieces just rented (best-effort, free email).
+  const consigned = await sql`
+    SELECT i.brand, i.rental_price, c.name, c.email, c.portal_code
+    FROM items i JOIN consignors c ON c.id = i.consignor_id
+    WHERE i.id = ANY(${itemIds}) AND i.ownership = 'consignment' AND c.email IS NOT NULL
+  `;
+  for (const c of consigned) {
+    await sendConsignorRentedEmail({
+      to: c.email,
+      consignorName: c.name,
+      brand: c.brand,
+      earned: Math.round(Number(c.rental_price) * CONSIGNOR_SHARE * 100) / 100,
+      portalCode: c.portal_code ?? null,
+    });
   }
 
   // Receipt email (best-effort; checkout already succeeded).

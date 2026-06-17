@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
+import { sendConsignorRentedEmail } from "@/lib/email";
+import { CONSIGNOR_SHARE } from "@/lib/types";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -38,6 +40,23 @@ export async function PATCH(request: Request, ctx: Ctx) {
       UPDATE items SET status = 'rented', rental_count = rental_count + 1, updated_at = now()
       WHERE id = ${rental.item_id}
     `;
+    // Notify the consignor (free email, best-effort) when their piece goes out.
+    const consigned = await sql`
+      SELECT i.brand, i.rental_price, c.name, c.email, c.portal_code
+      FROM items i JOIN consignors c ON c.id = i.consignor_id
+      WHERE i.id = ${rental.item_id} AND i.ownership = 'consignment'
+        AND c.email IS NOT NULL
+    `;
+    if (consigned.length > 0) {
+      const c = consigned[0];
+      await sendConsignorRentedEmail({
+        to: c.email,
+        consignorName: c.name,
+        brand: c.brand,
+        earned: Math.round(Number(rental.rental_price) * CONSIGNOR_SHARE * 100) / 100,
+        portalCode: c.portal_code ?? null,
+      });
+    }
   } else if (b.action === "return") {
     if (rental.status !== "active") {
       return NextResponse.json(

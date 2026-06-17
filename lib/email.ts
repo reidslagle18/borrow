@@ -25,6 +25,70 @@ function money(n: number): string {
   return `$${Number(n) % 1 === 0 ? Number(n) : Number(n).toFixed(2)}`;
 }
 
+/** Consignor-facing portal on the customer site (no admin access). */
+const PORTAL_URL = process.env.PORTAL_URL || "https://borrow-shop.vercel.app/portal";
+
+export interface ConsignorRentedData {
+  to: string;
+  consignorName: string;
+  brand: string;
+  earned: number;
+  portalCode: string | null;
+}
+
+function consignorRentedHtml(d: ConsignorRentedData): string {
+  const link = d.portalCode
+    ? `${PORTAL_URL}?code=${encodeURIComponent(d.portalCode)}`
+    : PORTAL_URL;
+  return `
+  <div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;color:#1a1a1a;">
+    <h1 style="font-style:italic;font-size:32px;margin:0 0 4px;">BORROW</h1>
+    <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Your piece just rented</p>
+    <p style="font-size:16px;">Congrats${d.consignorName ? `, ${d.consignorName.split(" ")[0]}` : ""}! Your <strong>${d.brand}</strong> has been rented out.</p>
+    <p style="font-size:22px;margin:16px 0;">You earned <strong>${money(d.earned)}</strong> on this rental.</p>
+    <p style="font-family:Helvetica,Arial,sans-serif;font-size:14px;color:#444;">
+      Head to your consignor portal to claim your earnings and see all your pieces and their status.
+    </p>
+    <p style="margin:24px 0;">
+      <a href="${link}" style="background:#1a1a1a;color:#f7f4ef;text-decoration:none;padding:12px 24px;border-radius:999px;font-family:Helvetica,Arial,sans-serif;font-size:15px;">
+        View my portal
+      </a>
+    </p>
+    ${
+      d.portalCode
+        ? `<p style="font-family:Helvetica,Arial,sans-serif;font-size:13px;color:#888;">Your access code: <strong style="font-family:monospace;">${d.portalCode}</strong></p>`
+        : ""
+    }
+  </div>`;
+}
+
+/**
+ * Notifies a consignor that their piece was rented and what they earned.
+ * Best-effort: no-ops (returns sent:false) when RESEND_API_KEY isn't set, so
+ * checkout/pickup never fail on a missing email config.
+ */
+export async function sendConsignorRentedEmail(
+  d: ConsignorRentedData
+): Promise<{ sent: boolean; error?: string }> {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return { sent: false, error: "email-not-configured" };
+  if (!d.to) return { sent: false, error: "no-recipient" };
+  try {
+    const resend = new Resend(key);
+    const from = process.env.RESEND_FROM || "BORROW <onboarding@resend.dev>";
+    const { error } = await resend.emails.send({
+      from,
+      to: d.to,
+      subject: `Your ${d.brand} just rented — you earned ${money(d.earned)}`,
+      html: consignorRentedHtml(d),
+    });
+    if (error) return { sent: false, error: String(error) };
+    return { sent: true };
+  } catch (err) {
+    return { sent: false, error: (err as Error).message };
+  }
+}
+
 function receiptHtml(d: ReceiptData): string {
   const rows = d.lines
     .map(
