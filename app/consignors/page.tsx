@@ -2,7 +2,14 @@
 
 import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
-import { Item, Consignor, Payout, statusLabel, ItemStatus } from "@/lib/types";
+import {
+  Item,
+  Consignor,
+  Payout,
+  ConsignorCharge,
+  statusLabel,
+  ItemStatus,
+} from "@/lib/types";
 import { fmtShort, dateOnly } from "@/lib/dates";
 
 const inputCls =
@@ -21,6 +28,8 @@ type ConsignorRow = Consignor & {
 type ConsignorDetail = ConsignorRow & {
   items: (Item & { completed_rentals: number; earned: number })[];
   payouts: Payout[];
+  charges: ConsignorCharge[];
+  cleaning_charges: number;
 };
 
 const STATUS_BADGE: Record<ItemStatus, string> = {
@@ -143,6 +152,7 @@ function DetailModal({
   const [paySaving, setPaySaving] = useState(false);
   const [busyItem, setBusyItem] = useState<string | null>(null);
   const [confirmReturn, setConfirmReturn] = useState<string | null>(null);
+  const [dryClean, setDryClean] = useState(false);
 
   async function load() {
     const res = await fetch(`/api/consignors/${id}`);
@@ -177,7 +187,7 @@ function DetailModal({
     const res = await fetch(`/api/items/${itemId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "return_to_consignor" }),
+      body: JSON.stringify({ action: "return_to_consignor", dry_clean: dryClean }),
     });
     if (res.ok) {
       await load();
@@ -188,6 +198,7 @@ function DetailModal({
     }
     setBusyItem(null);
     setConfirmReturn(null);
+    setDryClean(false);
   }
 
   return (
@@ -259,6 +270,11 @@ function DetailModal({
                 <p className="mt-1 font-serif text-2xl font-semibold">{money(detail.owed)}</p>
               </div>
             </div>
+            {detail.cleaning_charges > 0 && (
+              <p className="mt-1.5 text-[12px] text-ink/45">
+                Includes {money(detail.cleaning_charges)} in opt-in cleaning charges deducted from earnings.
+              </p>
+            )}
 
             {/* Record payout */}
             <div className="mt-4 rounded-2xl bg-lavender/25 p-4">
@@ -327,13 +343,35 @@ function DetailModal({
                     </span>
                     {i.status !== "retired" &&
                       (confirmReturn === i.id ? (
-                        <button
-                          onClick={() => returnPiece(i.id)}
-                          disabled={busyItem === i.id}
-                          className="shrink-0 rounded-full border border-blush-deep px-3 py-1.5 text-[12px] text-blush-deep disabled:opacity-40"
-                        >
-                          Confirm return
-                        </button>
+                        <div className="flex shrink-0 flex-col items-end gap-1.5">
+                          <label className="flex items-center gap-1.5 text-[12px] text-ink/60">
+                            <input
+                              type="checkbox"
+                              checked={dryClean}
+                              onChange={(e) => setDryClean(e.target.checked)}
+                              className="h-3.5 w-3.5 accent-ink"
+                            />
+                            Dry clean — consignor opted in (deducts the cleaning fee from earnings)
+                          </label>
+                          <div className="flex gap-1.5">
+                            <button
+                              onClick={() => returnPiece(i.id)}
+                              disabled={busyItem === i.id}
+                              className="rounded-full border border-blush-deep px-3 py-1.5 text-[12px] text-blush-deep disabled:opacity-40"
+                            >
+                              Confirm return
+                            </button>
+                            <button
+                              onClick={() => {
+                                setConfirmReturn(null);
+                                setDryClean(false);
+                              }}
+                              className="rounded-full px-3 py-1.5 text-[12px] text-ink/40"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
                       ) : (
                         <button
                           onClick={() => setConfirmReturn(i.id)}
@@ -359,6 +397,26 @@ function DetailModal({
                         {p.method && <span className="text-ink/50"> · {p.method}</span>}
                       </span>
                       <span className="text-ink/45">{fmtShort(dateOnly(p.paid_at))}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* Cleaning charges (opt-in) */}
+            {detail.charges.length > 0 && (
+              <>
+                <h3 className="mt-6 text-xl font-medium">Cleaning charges</h3>
+                <div className="mt-2 space-y-1.5">
+                  {detail.charges.map((c) => (
+                    <div key={c.id} className="flex items-center justify-between rounded-xl bg-white/70 px-4 py-2.5 text-[14px]">
+                      <span>
+                        −{money(c.amount)}
+                        <span className="text-ink/50">
+                          {" "}· {c.kind === "retrieval" ? "dry clean at retrieval" : "initial clean"}
+                        </span>
+                      </span>
+                      <span className="text-ink/45">{fmtShort(dateOnly(c.charged_on))}</span>
                     </div>
                   ))}
                 </div>

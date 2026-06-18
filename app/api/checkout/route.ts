@@ -56,7 +56,7 @@ export async function POST(request: Request) {
 
   // Load the pieces and verify each can be rented.
   const items = await sql`
-    SELECT id, brand, barcode, rental_price, status
+    SELECT id, brand, barcode, rental_price, status, ownership, consignor_id
     FROM items WHERE id = ANY(${itemIds})
   `;
   if (items.length !== itemIds.length) {
@@ -179,7 +179,7 @@ export async function POST(request: Request) {
   // One active rental per piece, linked to the transaction, and flip each
   // piece to Rented Out (mirrors the rental "pickup" action).
   for (const p of plan) {
-    await sql`
+    const rentalRows = await sql`
       INSERT INTO rentals (
         item_id, customer_id, start_date, due_date, status,
         rental_price, damage_waiver, cleaning_fee, source, transaction_id
@@ -188,11 +188,23 @@ export async function POST(request: Request) {
         'active', ${p.charge}, ${p.waiver}, ${p.waiver ? cleaningFee : 0},
         'checkout', ${tx.id}
       )
+      RETURNING id
     `;
     await sql`
       UPDATE items SET status = 'rented', rental_count = rental_count + 1, updated_at = now()
       WHERE id = ${p.item.id}
     `;
+    // Free / bonus rentals collect no Cleaning & Care Fee, so BORROW absorbs
+    // the cleaning cost — log it as an expense (the consignor is never charged).
+    if (p.kind === "free" || p.kind === "bonus") {
+      await sql`
+        INSERT INTO cleaning_expenses (amount, reason, item_id, rental_id, consignor_id)
+        VALUES (
+          ${cleaningFee}, ${"free_ambassador_rental"}, ${p.item.id}, ${rentalRows[0].id},
+          ${p.item.ownership === "consignment" ? p.item.consignor_id ?? null : null}
+        )
+      `;
+    }
   }
 
   // Referral attribution: if a referral code was entered, link this rental +

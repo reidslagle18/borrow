@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
+import { getProgram } from "@/lib/credits";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -54,6 +55,15 @@ export async function PATCH(request: Request, ctx: Ctx) {
         { error: "Only consignment pieces can be returned to a consignor" },
         { status: 400 }
       );
+    }
+    // Opt-in dry clean at retrieval — only when the consignor agreed. Deducts
+    // the Cleaning & Care Fee amount from their earnings.
+    if (b.dry_clean && rows[0].consignor_id) {
+      const fee = (await getProgram()).cleaning_fee;
+      await sql`
+        INSERT INTO consignor_charges (consignor_id, amount, kind, item_id, note)
+        VALUES (${rows[0].consignor_id}, ${fee}, 'retrieval', ${id}, 'Dry clean at retrieval')
+      `;
     }
     return NextResponse.json(rows[0]);
   }

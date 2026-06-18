@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema, nextItemId } from "@/lib/db";
+import { getProgram } from "@/lib/credits";
 
 export async function GET() {
   await ensureSchema();
@@ -48,6 +49,19 @@ export async function POST(request: Request) {
       )
       RETURNING *
     `;
+    // Opt-in initial clean before first listing — only when the consignor
+    // agreed. Deducts the Cleaning & Care Fee amount from their earnings.
+    if (
+      b.initial_clean &&
+      b.ownership === "consignment" &&
+      (b.consignor_id ?? null)
+    ) {
+      const fee = (await getProgram()).cleaning_fee;
+      await sql`
+        INSERT INTO consignor_charges (consignor_id, amount, kind, item_id, note)
+        VALUES (${b.consignor_id}, ${fee}, 'initial', ${rows[0].id}, 'Initial clean before listing')
+      `;
+    }
     return NextResponse.json(rows[0], { status: 201 });
   } catch (err) {
     if ((err as { code?: string }).code === "23505") {

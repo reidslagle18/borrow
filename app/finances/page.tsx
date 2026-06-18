@@ -10,7 +10,9 @@ type Period = {
   rental_revenue: number;
   cleaning_fee_revenue: number;
   late_fees: number;
+  cleaning_cost: number;
   total: number;
+  net: number;
 };
 
 type Piece = {
@@ -73,6 +75,14 @@ function PeriodCard({ title, p }: { title: string; p: Period }) {
         <div className="flex justify-between">
           <span>Late fees</span>
           <span>{money(p.late_fees)}</span>
+        </div>
+        <div className="flex justify-between text-blush-deep">
+          <span>Cleaning costs (absorbed)</span>
+          <span>−{money(p.cleaning_cost)}</span>
+        </div>
+        <div className="flex justify-between border-t border-ink/10 pt-1 font-medium text-ink/80">
+          <span>Net</span>
+          <span>{money(p.net)}</span>
         </div>
       </div>
     </div>

@@ -51,16 +51,27 @@ export async function GET(request: Request) {
           SELECT COALESCE(SUM(late_fee), 0) AS late_fees
           FROM rentals WHERE status = 'completed'
         `;
+    const cleaningAgg = from
+      ? await sql`
+          SELECT COALESCE(SUM(amount), 0) AS cleaning_cost
+          FROM cleaning_expenses
+          WHERE incurred_on >= ${from} AND incurred_on <= ${today}
+        `
+      : await sql`SELECT COALESCE(SUM(amount), 0) AS cleaning_cost FROM cleaning_expenses`;
     const r = rentalAgg[0];
     const rental_revenue = Number(r.rental_revenue);
     const cleaning_fee_revenue = Number(r.cleaning_fee_revenue);
     const late_fees = Number(feeAgg[0].late_fees);
+    const cleaning_cost = Number(cleaningAgg[0].cleaning_cost);
+    const total = rental_revenue + cleaning_fee_revenue + late_fees;
     return {
       rentals: r.rentals,
       rental_revenue,
       cleaning_fee_revenue,
       late_fees,
-      total: rental_revenue + cleaning_fee_revenue + late_fees,
+      cleaning_cost,
+      total,
+      net: total - cleaning_cost,
     };
   }
 

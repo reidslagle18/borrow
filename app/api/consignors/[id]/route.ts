@@ -25,10 +25,17 @@ export async function GET(_req: Request, ctx: Ctx) {
     SELECT * FROM payouts WHERE consignor_id = ${id}
     ORDER BY paid_at DESC, id DESC
   `;
+  // Opt-in cleaning charges (retrieval / initial) deduct from earnings; cleaning
+  // on rentals is never charged to the consignor.
+  const charges = await sql`
+    SELECT * FROM consignor_charges WHERE consignor_id = ${id}
+    ORDER BY charged_on DESC, id DESC
+  `;
 
   const revenue = items.reduce((s, i) => s + Number(i.revenue), 0);
   const earned = Math.round(revenue * CONSIGNOR_SHARE * 100) / 100;
   const paid = payouts.reduce((s, p) => s + Number(p.amount), 0);
+  const charged = charges.reduce((s, c) => s + Number(c.amount), 0);
 
   return NextResponse.json({
     ...consignors[0],
@@ -37,9 +44,11 @@ export async function GET(_req: Request, ctx: Ctx) {
       earned: Math.round(Number(i.revenue) * CONSIGNOR_SHARE * 100) / 100,
     })),
     payouts,
+    charges,
     earned,
     paid,
-    owed: Math.max(0, earned - paid),
+    cleaning_charges: charged,
+    owed: Math.max(0, earned - charged - paid),
   });
 }
 

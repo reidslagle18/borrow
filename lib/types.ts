@@ -101,6 +101,17 @@ export interface Payout {
   paid_at: string;
 }
 
+export interface ConsignorCharge {
+  id: number;
+  consignor_id: number;
+  amount: number;
+  kind: "retrieval" | "initial";
+  item_id: string | null;
+  note: string | null;
+  charged_on: string;
+  created_at: string;
+}
+
 export interface Customer {
   id: number;
   name: string;

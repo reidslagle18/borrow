@@ -123,6 +123,7 @@ export default function ItemForm({
   const [ncPhone, setNcPhone] = useState("");
   const [ncEmail, setNcEmail] = useState("");
   const [ncError, setNcError] = useState("");
+  const [initialClean, setInitialClean] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const barcodeRef = useRef<HTMLInputElement>(null);
   const [scanOpen, setScanOpen] = useState(false);
@@ -267,6 +268,7 @@ export default function ItemForm({
       acquisition_date: acquisitionDate || null,
       source: source.trim(),
       ambassador_id: ambassadorId === "" ? null : ambassadorId,
+      initial_clean: !editing && ownership === "consignment" && initialClean,
       condition_notes: conditionNotes.trim(),
       ownership,
       consignor_id: consignorId === "" ? null : consignorId,
@@ -803,6 +805,20 @@ export default function ItemForm({
                       </button>
                     </div>
                   </div>
+                )}
+                {!editing && (
+                  <label className="mt-3 flex items-start gap-2 text-[13px] text-ink/70">
+                    <input
+                      type="checkbox"
+                      checked={initialClean}
+                      onChange={(e) => setInitialClean(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 accent-ink"
+                    />
+                    <span>
+                      Initial clean before listing — consignor opted in (deducts
+                      the cleaning fee from their earnings).
+                    </span>
+                  </label>
                 )}
               </div>
             )}

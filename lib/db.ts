@@ -247,6 +247,37 @@ async function createSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+
+  // Cleaning costs BORROW absorbs (e.g. a free ambassador rental where no
+  // Cleaning & Care Fee was collected) — tracked as an expense in Finances.
+  await sql`
+    CREATE TABLE IF NOT EXISTS cleaning_expenses (
+      id SERIAL PRIMARY KEY,
+      amount NUMERIC(8,2) NOT NULL,
+      reason TEXT NOT NULL,
+      item_id TEXT REFERENCES items(id) ON DELETE SET NULL,
+      rental_id INT REFERENCES rentals(id) ON DELETE SET NULL,
+      consignor_id INT REFERENCES consignors(id) ON DELETE SET NULL,
+      incurred_on DATE NOT NULL DEFAULT CURRENT_DATE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+
+  // Opt-in cleaning charges against a consignor — only OUTSIDE the rental
+  // cycle: a dry clean at retrieval, or an initial clean before first listing.
+  // These deduct from the consignor's earnings.
+  await sql`
+    CREATE TABLE IF NOT EXISTS consignor_charges (
+      id SERIAL PRIMARY KEY,
+      consignor_id INT NOT NULL REFERENCES consignors(id) ON DELETE CASCADE,
+      amount NUMERIC(8,2) NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('retrieval','initial')),
+      item_id TEXT REFERENCES items(id) ON DELETE SET NULL,
+      note TEXT,
+      charged_on DATE NOT NULL DEFAULT CURRENT_DATE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */
