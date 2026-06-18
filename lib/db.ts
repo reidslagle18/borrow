@@ -81,6 +81,7 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS retired_at DATE`;
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS photos TEXT[] NOT NULL DEFAULT '{}'`;
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS new_with_tags BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS ambassador_id INT`;
 
   // Allow the new tier ('high') and ownership ('ambassador') values by
   // relaxing the original CHECK constraints (Postgres default names).
@@ -169,6 +170,38 @@ async function createSchema(): Promise<void> {
   `;
   // Link rentals to their checkout transaction (additive; existing rows null).
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS transaction_id INT REFERENCES transactions(id)`;
+
+  // Ambassadors: Curators (propose pieces) and Posters (rotate monthly). Each
+  // links to their own customer record (they rent) and optionally a consignor
+  // record (if they bring pieces). items.ambassador_id attributes sourced
+  // pieces back to them.
+  await sql`
+    CREATE TABLE IF NOT EXISTS ambassadors (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      instagram TEXT,
+      phone TEXT,
+      sorority TEXT,
+      tier TEXT NOT NULL DEFAULT 'poster' CHECK (tier IN ('curator','poster')),
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
+      join_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      referral_code TEXT UNIQUE,
+      active_months TEXT[] NOT NULL DEFAULT '{}',
+      customer_id INT REFERENCES customers(id),
+      consignor_id INT REFERENCES consignors(id),
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS ambassador_proposals (
+      id SERIAL PRIMARY KEY,
+      ambassador_id INT NOT NULL REFERENCES ambassadors(id) ON DELETE CASCADE,
+      description TEXT NOT NULL,
+      accepted BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */

@@ -9,9 +9,10 @@ export async function GET(_req: Request, ctx: Ctx) {
   await ensureSchema();
   const { id } = await ctx.params;
   const rows = await sql`
-    SELECT i.*, c.name AS consignor_name
+    SELECT i.*, c.name AS consignor_name, a.name AS ambassador_name
     FROM items i
     LEFT JOIN consignors c ON c.id = i.consignor_id
+    LEFT JOIN ambassadors a ON a.id = i.ambassador_id
     WHERE i.id = ${id} OR i.barcode = ${id}
     LIMIT 1
   `;
@@ -101,6 +102,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
         fit_notes = ${b.fit_notes || null},
         silhouette = ${b.silhouette || null},
         new_with_tags = ${!!b.new_with_tags},
+        ambassador_id = ${b.ambassador_id ?? null},
         tier = ${b.tier},
         rental_price = ${b.rental_price},
         purchase_cost = ${b.purchase_cost ?? null},

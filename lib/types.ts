@@ -26,6 +26,8 @@ export interface Item {
   fit_notes: string | null;
   silhouette: string | null;
   new_with_tags: boolean; // brand new, original retail tags still attached
+  ambassador_id: number | null; // ambassador who sourced/brought in the piece
+  ambassador_name?: string | null;
   tier: Tier;
   rental_price: number;
   purchase_cost: number | null; // acquisition cost
@@ -103,6 +105,65 @@ export interface Customer {
   instagram: string | null;
   flag: "vip" | "problem" | null;
   notes: string | null;
+}
+
+export type AmbassadorTier = "curator" | "poster";
+export type AmbassadorStatus = "active" | "inactive";
+
+export interface Ambassador {
+  id: number;
+  name: string;
+  instagram: string | null;
+  phone: string | null;
+  sorority: string | null;
+  tier: AmbassadorTier;
+  status: AmbassadorStatus;
+  join_date: string; // YYYY-MM-DD
+  referral_code: string;
+  active_months: string[]; // posters rotate monthly — months they're active
+  customer_id: number | null;
+  consignor_id: number | null;
+  notes: string | null;
+  created_at: string;
+}
+
+/** A piece a Curator proposed, and whether BORROW accepted it. */
+export interface AmbassadorProposal {
+  id: number;
+  ambassador_id: number;
+  description: string;
+  accepted: boolean;
+  created_at: string;
+}
+
+export const AMBASSADOR_TIERS: { value: AmbassadorTier; label: string }[] = [
+  { value: "curator", label: "Curator" },
+  { value: "poster", label: "Poster" },
+];
+
+export const AMBASSADOR_STATUSES: { value: AmbassadorStatus; label: string }[] =
+  [
+    { value: "active", label: "Active" },
+    { value: "inactive", label: "Inactive" },
+  ];
+
+export const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+export function ambassadorTierLabel(tier: AmbassadorTier): string {
+  return AMBASSADOR_TIERS.find((t) => t.value === tier)?.label ?? tier;
 }
 
 export interface Rental {

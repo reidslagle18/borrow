@@ -4,9 +4,10 @@ import { sql, ensureSchema, nextItemId } from "@/lib/db";
 export async function GET() {
   await ensureSchema();
   const rows = await sql`
-    SELECT i.*, c.name AS consignor_name
+    SELECT i.*, c.name AS consignor_name, a.name AS ambassador_name
     FROM items i
     LEFT JOIN consignors c ON c.id = i.consignor_id
+    LEFT JOIN ambassadors a ON a.id = i.ambassador_id
     ORDER BY i.created_at DESC
   `;
   return NextResponse.json(rows);
@@ -30,13 +31,14 @@ export async function POST(request: Request) {
     const rows = await sql`
       INSERT INTO items (
         id, barcode, brand, description, size, color, fabric, fit_notes,
-        silhouette, new_with_tags, tier, rental_price, purchase_cost, retail_value,
-        acquisition_date, source, condition_notes, ownership, consignor_id,
-        event_types, status, location, photo_url, photos
+        silhouette, new_with_tags, ambassador_id, tier, rental_price, purchase_cost,
+        retail_value, acquisition_date, source, condition_notes, ownership,
+        consignor_id, event_types, status, location, photo_url, photos
       ) VALUES (
         ${id}, ${String(b.barcode).trim()}, ${b.brand}, ${b.description || null},
         ${b.size}, ${b.color || null}, ${b.fabric || null}, ${b.fit_notes || null},
-        ${b.silhouette || null}, ${!!b.new_with_tags}, ${b.tier}, ${b.rental_price},
+        ${b.silhouette || null}, ${!!b.new_with_tags}, ${b.ambassador_id ?? null},
+        ${b.tier}, ${b.rental_price},
         ${b.purchase_cost ?? null}, ${b.retail_value ?? null},
         ${b.acquisition_date || null}, ${b.source || null},
         ${b.condition_notes || null}, ${b.ownership || "owned"},

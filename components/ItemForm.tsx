@@ -89,6 +89,12 @@ export default function ItemForm({
     item?.acquisition_date ?? ""
   );
   const [source, setSource] = useState(item?.source ?? "");
+  const [ambassadorId, setAmbassadorId] = useState<number | "">(
+    item?.ambassador_id ?? ""
+  );
+  const [ambassadors, setAmbassadors] = useState<
+    { id: number; name: string }[]
+  >([]);
   const [conditionNotes, setConditionNotes] = useState(
     item?.condition_notes ?? ""
   );
@@ -129,6 +135,22 @@ export default function ItemForm({
       el.focus();
       el.select();
     }
+  }, []);
+
+  // Load ambassadors so a piece can be attributed to whoever sourced it.
+  useEffect(() => {
+    (async () => {
+      const res = await fetch("/api/ambassadors");
+      if (res.ok) {
+        const data = await res.json();
+        setAmbassadors(
+          data.map((a: { id: number; name: string }) => ({
+            id: a.id,
+            name: a.name,
+          }))
+        );
+      }
+    })();
   }, []);
 
   const selectedConsignor =
@@ -244,6 +266,7 @@ export default function ItemForm({
       retail_value: retailValue === "" ? null : Number(retailValue),
       acquisition_date: acquisitionDate || null,
       source: source.trim(),
+      ambassador_id: ambassadorId === "" ? null : ambassadorId,
       condition_notes: conditionNotes.trim(),
       ownership,
       consignor_id: consignorId === "" ? null : consignorId,
@@ -610,6 +633,24 @@ export default function ItemForm({
                   placeholder="Boutique, donor, sample sale…"
                 />
               </div>
+            </div>
+
+            <div>
+              <label className={labelCls}>Sourced by (ambassador)</label>
+              <select
+                className={inputCls}
+                value={ambassadorId}
+                onChange={(e) =>
+                  setAmbassadorId(e.target.value ? Number(e.target.value) : "")
+                }
+              >
+                <option value="">— None —</option>
+                {ambassadors.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div>
