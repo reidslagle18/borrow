@@ -123,6 +123,17 @@ export interface Customer {
   instagram: string | null;
   flag: "vip" | "problem" | null;
   notes: string | null;
+  store_credit: number;
+}
+
+export interface StoreCreditEntry {
+  id: number;
+  customer_id: number;
+  amount: number; // + grant, - redemption
+  reason: string;
+  rental_id: number | null;
+  transaction_id: number | null;
+  created_at: string;
 }
 
 export type AmbassadorTier = "curator" | "poster";
@@ -168,6 +179,7 @@ export interface AmbassadorProgram {
   cleaning_fee: number; // Cleaning & Care Fee added to every paying rental
   blackout_dates: string[]; // YYYY-MM-DD; perks suppressed on these days
   posting_target: number; // posts expected per ambassador per month
+  post_credit: number; // store credit a customer earns for posting a rental
 }
 
 export const DEFAULT_PROGRAM: AmbassadorProgram = {
@@ -179,6 +191,7 @@ export const DEFAULT_PROGRAM: AmbassadorProgram = {
   cleaning_fee: 6,
   blackout_dates: [],
   posting_target: 3,
+  post_credit: 5,
 };
 
 export interface AmbassadorPost {

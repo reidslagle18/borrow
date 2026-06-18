@@ -150,6 +150,24 @@ export default function SettingsPage() {
               <p className="mt-3 text-[12px] text-ink/45">
                 Curators also earn +1 bonus free credit each time a piece they proposed is accepted.
               </p>
+              <div className="mt-4 max-w-[14rem]">
+                <label className={labelCls}>Post store credit ($ / posted rental)</label>
+                <input
+                  type="number"
+                  min={0}
+                  className={inputCls}
+                  value={program.post_credit}
+                  onChange={(e) =>
+                    setProgram((p) => ({
+                      ...p,
+                      post_credit: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                    }))
+                  }
+                />
+                <p className="mt-1 text-[12px] text-ink/45">
+                  Credit a customer earns when they post a rental; auto-applies at their next checkout.
+                </p>
+              </div>
             </section>
 
             {/* Posting target */}

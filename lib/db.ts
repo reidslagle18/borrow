@@ -288,6 +288,28 @@ async function createSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+
+  // Store credit (e.g. $5 for posting a rented piece) — a running balance on
+  // the customer plus a ledger of grants (+) and redemptions (-). The partial
+  // unique index enforces at most one post credit per rental.
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS store_credit NUMERIC(10,2) NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS store_credit_applied NUMERIC(10,2) NOT NULL DEFAULT 0`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS store_credit_entries (
+      id SERIAL PRIMARY KEY,
+      customer_id INT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      amount NUMERIC(10,2) NOT NULL,
+      reason TEXT NOT NULL,
+      rental_id INT REFERENCES rentals(id) ON DELETE SET NULL,
+      transaction_id INT REFERENCES transactions(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS store_credit_post_once
+    ON store_credit_entries(rental_id)
+    WHERE reason = 'post' AND rental_id IS NOT NULL
+  `;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */

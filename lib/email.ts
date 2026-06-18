@@ -15,6 +15,7 @@ export interface ReceiptData {
   subtotal: number;
   waiverTotal: number;
   total: number;
+  creditApplied?: number;
   startDate: string;
   dueDate: string;
   agreementName: string;
@@ -120,6 +121,7 @@ function receiptHtml(d: ReceiptData): string {
       ${rows}
       <tr><td style="padding:8px 0;">Subtotal</td><td style="padding:8px 0;text-align:right;">${money(d.subtotal)}</td></tr>
       <tr><td style="padding:4px 0;">Cleaning &amp; Care Fee</td><td style="padding:4px 0;text-align:right;">${money(d.waiverTotal)}</td></tr>
+      ${d.creditApplied ? `<tr><td style="padding:4px 0;">Store credit</td><td style="padding:4px 0;text-align:right;">−${money(d.creditApplied)}</td></tr>` : ""}
       <tr><td style="padding:8px 0;font-weight:bold;border-top:2px solid #1a1a1a;">Total</td>
           <td style="padding:8px 0;text-align:right;font-weight:bold;border-top:2px solid #1a1a1a;">${money(d.total)}</td></tr>
     </table>

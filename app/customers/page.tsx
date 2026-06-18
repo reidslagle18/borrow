@@ -13,6 +13,7 @@ type CustomerRow = Customer & { rental_count: number };
 type CustomerDetail = Customer & {
   rentals: Rental[];
   spent: number;
+  credited_rental_ids: number[];
 };
 
 const RENTAL_BADGE: Record<RentalStatus, { label: string; cls: string }> = {
@@ -120,6 +121,18 @@ function DetailModal({
       await load();
     }
     setSaving(false);
+  }
+
+  async function grantPostCredit(rentalId: number) {
+    const res = await fetch(`/api/customers/${id}/credit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rental_id: rentalId }),
+    });
+    if (res.ok) {
+      onChanged();
+      await load();
+    }
   }
 
   const completed =
@@ -236,6 +249,13 @@ function DetailModal({
               </span>
             </div>
 
+            {Number(detail.store_credit) > 0 && (
+              <p className="mt-3 rounded-2xl bg-sage/30 px-4 py-2.5 text-sm">
+                <span className="font-medium">{money(detail.store_credit)} store credit</span>{" "}
+                — applies automatically at their next checkout.
+              </p>
+            )}
+
             {/* Rental history */}
             <h3 className="mt-6 text-xl font-medium">
               Rental history ({detail.rentals.length})
@@ -272,9 +292,23 @@ function DetailModal({
                           {r.damaged && " · damaged"}
                         </p>
                       </div>
-                      <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] ${badge.cls}`}>
-                        {badge.label}
-                      </span>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <span className={`rounded-full px-2.5 py-1 text-[11px] ${badge.cls}`}>
+                          {badge.label}
+                        </span>
+                        {(r.status === "active" || r.status === "completed") &&
+                          (detail.credited_rental_ids.includes(r.id) ? (
+                            <span className="text-[11px] text-sage-deep">✓ post credit</span>
+                          ) : (
+                            <button
+                              onClick={() => grantPostCredit(r.id)}
+                              className="rounded-full border border-ink/15 px-2.5 py-1 text-[11px] text-ink/55"
+                              title="Customer posted this rental — grant store credit"
+                            >
+                              + post credit
+                            </button>
+                          ))}
+                      </div>
                     </div>
                   );
                 })

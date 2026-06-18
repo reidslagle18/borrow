@@ -28,7 +28,16 @@ export async function GET(_req: Request, ctx: Ctx) {
         Number(r.late_fee),
       0
     );
-  return NextResponse.json({ ...customers[0], rentals, spent });
+  const credited = await sql`
+    SELECT rental_id FROM store_credit_entries
+    WHERE customer_id = ${id} AND reason = 'post' AND rental_id IS NOT NULL
+  `;
+  return NextResponse.json({
+    ...customers[0],
+    rentals,
+    spent,
+    credited_rental_ids: credited.map((r) => r.rental_id),
+  });
 }
 
 export async function PATCH(request: Request, ctx: Ctx) {

@@ -91,6 +91,7 @@ export async function POST(request: Request) {
     name: me.name,
     email: me.email,
     phone: me.phone,
+    store_credit: Number(me.store_credit ?? 0),
     rentals,
     consignment,
   });

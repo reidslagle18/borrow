@@ -62,6 +62,7 @@ export default function CheckoutPage() {
     ambassadorApplied: boolean;
     blackout: boolean;
     referredBy: string | null;
+    creditApplied: number;
   } | null>(null);
 
   useEffect(() => {
@@ -231,6 +232,7 @@ export default function CheckoutPage() {
         ambassadorApplied: !!data.ambassador_applied,
         blackout: !!data.blackout,
         referredBy: data.referred_by ?? null,
+        creditApplied: Number(data.credit_applied) || 0,
       });
     } else {
       const data = await res.json().catch(() => ({}));
@@ -284,6 +286,11 @@ export default function CheckoutPage() {
           {done.referredBy && (
             <p className="mt-1 text-sm text-ink/50">
               Referral credited to {done.referredBy}.
+            </p>
+          )}
+          {done.creditApplied > 0 && (
+            <p className="mt-1 text-sm text-sage-deep">
+              {money(done.creditApplied)} store credit applied.
             </p>
           )}
           <div className="mt-8 flex justify-center gap-3">

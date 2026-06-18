@@ -25,6 +25,7 @@ export async function getProgram(): Promise<AmbassadorProgram> {
     cleaning_fee: v.cleaning_fee ?? DEFAULT_PROGRAM.cleaning_fee,
     blackout_dates: Array.isArray(v.blackout_dates) ? v.blackout_dates : [],
     posting_target: v.posting_target ?? DEFAULT_PROGRAM.posting_target,
+    post_credit: v.post_credit ?? DEFAULT_PROGRAM.post_credit,
   };
 }
 

@@ -158,23 +158,41 @@ export async function POST(request: Request) {
   const cleaningFee = program.cleaning_fee;
   const subtotal = plan.reduce((s, p) => s + p.charge, 0);
   const waiverTotal = plan.filter((p) => p.waiver).length * cleaningFee;
-  const total = subtotal + waiverTotal;
+  const grossTotal = subtotal + waiverTotal;
+
+  // Apply any store credit the customer has, up to the order total.
+  let creditApplied = 0;
+  if (b.customer_id) {
+    const cust = await sql`SELECT store_credit FROM customers WHERE id = ${b.customer_id}`;
+    const bal = Number(cust[0]?.store_credit ?? 0);
+    creditApplied = Math.min(bal, grossTotal);
+  }
+  const total = grossTotal - creditApplied;
 
   // One transaction row for the whole checkout.
   const txRows = await sql`
     INSERT INTO transactions (
-      customer_id, piece_count, subtotal, waiver_total, total,
+      customer_id, piece_count, subtotal, waiver_total, total, store_credit_applied,
       start_date, due_date, payment_method, payment_status, payment_ref,
       agreement_accepted, agreement_name, agreement_accepted_at, receipt_email
     ) VALUES (
       ${b.customer_id ?? null}, ${items.length}, ${subtotal}, ${waiverTotal}, ${total},
-      ${b.start_date}, ${b.due_date}, ${b.payment_method || "card_reader"},
+      ${creditApplied}, ${b.start_date}, ${b.due_date}, ${b.payment_method || "card_reader"},
       'collected', ${b.payment_ref || null},
       true, ${b.agreement_name || null}, now(), ${b.receipt_email || null}
     )
     RETURNING *
   `;
   const tx = txRows[0];
+
+  // Deduct the redeemed store credit and log it against the transaction.
+  if (creditApplied > 0 && b.customer_id) {
+    await sql`UPDATE customers SET store_credit = store_credit - ${creditApplied} WHERE id = ${b.customer_id}`;
+    await sql`
+      INSERT INTO store_credit_entries (customer_id, amount, reason, transaction_id)
+      VALUES (${b.customer_id}, ${-creditApplied}, 'redeem', ${tx.id})
+    `;
+  }
 
   // One active rental per piece, linked to the transaction, and flip each
   // piece to Rented Out (mirrors the rental "pickup" action).
@@ -269,6 +287,7 @@ export async function POST(request: Request) {
       subtotal,
       waiverTotal,
       total,
+      creditApplied,
       startDate: b.start_date,
       dueDate: b.due_date,
       agreementName: b.agreement_name || customerName,
@@ -287,6 +306,7 @@ export async function POST(request: Request) {
       ambassador_applied: !!ambassador,
       blackout: !!amb && blackout,
       referred_by: referredBy,
+      credit_applied: creditApplied,
       breakdown: plan.map((p) => ({
         barcode: p.item.barcode || p.item.id,
         kind: p.kind,

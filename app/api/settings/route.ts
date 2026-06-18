@@ -44,6 +44,7 @@ export async function PUT(request: Request) {
     cleaning_fee: num(p.cleaning_fee, DEFAULT_PROGRAM.cleaning_fee),
     blackout_dates: dates,
     posting_target: num(p.posting_target, DEFAULT_PROGRAM.posting_target),
+    post_credit: num(p.post_credit, DEFAULT_PROGRAM.post_credit),
   };
 
   await sql`
