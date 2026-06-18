@@ -165,6 +165,20 @@ function DetailModal({
   const [busyItem, setBusyItem] = useState<string | null>(null);
   const [confirmReturn, setConfirmReturn] = useState<string | null>(null);
   const [dryClean, setDryClean] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  async function remove() {
+    const res = await fetch(`/api/consignors/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      onChanged();
+      onClose();
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setDeleteError(d.error || "Couldn't delete this consignor.");
+      setConfirmingDelete(false);
+    }
+  }
 
   async function load() {
     const res = await fetch(`/api/consignors/${id}`);
@@ -250,13 +264,28 @@ function DetailModal({
                   </button>
                 )}
               </div>
-              <div className="flex shrink-0 gap-1">
+              <div className="flex shrink-0 items-center gap-1">
                 <button
                   onClick={() => setEditOpen(true)}
                   className="rounded-full border border-ink/15 px-3.5 py-1.5 text-sm text-ink/60"
                 >
                   Edit
                 </button>
+                {confirmingDelete ? (
+                  <button
+                    onClick={remove}
+                    className="rounded-full border border-blush-deep px-3 py-1.5 text-sm text-blush-deep"
+                  >
+                    Really delete?
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setConfirmingDelete(true)}
+                    className="rounded-full border border-ink/15 px-3.5 py-1.5 text-sm text-ink/40"
+                  >
+                    Delete
+                  </button>
+                )}
                 <button
                   onClick={onClose}
                   className="rounded-full px-3 py-1 text-2xl leading-none text-ink/40 hover:bg-ink/5"
@@ -266,6 +295,12 @@ function DetailModal({
                 </button>
               </div>
             </div>
+
+            {deleteError && (
+              <p className="mb-3 rounded-2xl bg-blush/25 px-4 py-2.5 text-sm text-ink/70">
+                {deleteError}
+              </p>
+            )}
 
             {/* Money summary */}
             <div className="grid grid-cols-3 gap-2">

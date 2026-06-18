@@ -75,3 +75,26 @@ export async function PATCH(request: Request, ctx: Ctx) {
   }
   return NextResponse.json(rows[0]);
 }
+
+export async function DELETE(_req: Request, ctx: Ctx) {
+  await ensureSchema();
+  const { id } = await ctx.params;
+
+  const items = await sql`SELECT COUNT(*)::int n FROM items WHERE consignor_id = ${id}`;
+  if (items[0].n > 0) {
+    return NextResponse.json(
+      {
+        error: `This consignor still has ${items[0].n} piece(s). Remove or reassign their pieces first.`,
+      },
+      { status: 400 }
+    );
+  }
+  // Detach any ambassador linked to this consignor; payouts & cleaning charges
+  // cascade automatically.
+  await sql`UPDATE ambassadors SET consignor_id = NULL WHERE consignor_id = ${id}`;
+  const del = await sql`DELETE FROM consignors WHERE id = ${id} RETURNING id`;
+  if (del.length === 0) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  return NextResponse.json({ ok: true });
+}

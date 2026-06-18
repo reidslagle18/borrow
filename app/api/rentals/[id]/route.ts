@@ -174,3 +174,33 @@ export async function PATCH(request: Request, ctx: Ctx) {
   `;
   return NextResponse.json(rows[0]);
 }
+
+// Delete a rental (e.g. clearing out practice/test data). If the piece had been
+// picked up, undo the rental_count bump, then re-derive the piece's status from
+// any remaining live rentals so it isn't left stranded as rented/cleaning.
+export async function DELETE(_req: Request, ctx: Ctx) {
+  await ensureSchema();
+  const { id } = await ctx.params;
+  const existing = await sql`SELECT * FROM rentals WHERE id = ${id}`;
+  if (existing.length === 0) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  const rental = existing[0];
+  await sql`DELETE FROM rentals WHERE id = ${id}`;
+  if (rental.status === "active" || rental.status === "completed") {
+    await sql`
+      UPDATE items SET rental_count = GREATEST(rental_count - 1, 0), updated_at = now()
+      WHERE id = ${rental.item_id}
+    `;
+  }
+  // Only re-derive status for pieces still in the rental cycle (not retired/cleaning).
+  await sql`
+    UPDATE items SET status = CASE
+      WHEN EXISTS (SELECT 1 FROM rentals WHERE item_id = ${rental.item_id} AND status = 'active') THEN 'rented'
+      WHEN EXISTS (SELECT 1 FROM rentals WHERE item_id = ${rental.item_id} AND status = 'reserved') THEN 'reserved'
+      ELSE 'available'
+    END, updated_at = now()
+    WHERE id = ${rental.item_id} AND status IN ('available','reserved','rented')
+  `;
+  return NextResponse.json({ ok: true });
+}

@@ -292,6 +292,15 @@ function DetailModal({ id, onClose, onChanged }: { id: number; onClose: () => vo
   const [postDate, setPostDate] = useState(todayISO());
   const [postLink, setPostLink] = useState("");
   const [postNote, setPostNote] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  async function remove() {
+    const res = await fetch(`/api/ambassadors/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      onChanged();
+      onClose();
+    }
+  }
 
   async function load() {
     const res = await fetch(`/api/ambassadors/${id}`);
@@ -439,10 +448,19 @@ function DetailModal({ id, onClose, onChanged }: { id: number; onClose: () => vo
                   <p className="mt-1 text-[13px] text-ink/45">Active: {detail.active_months.join(", ")}</p>
                 )}
               </div>
-              <div className="flex shrink-0 gap-1">
+              <div className="flex shrink-0 items-center gap-1">
                 <button onClick={() => setEditing(!editing)} className="rounded-full border border-ink/15 px-3.5 py-1.5 text-sm text-ink/60">
                   {editing ? "Close edit" : "Edit"}
                 </button>
+                {confirmingDelete ? (
+                  <button onClick={remove} className="rounded-full border border-blush-deep px-3 py-1.5 text-sm text-blush-deep">
+                    Really delete?
+                  </button>
+                ) : (
+                  <button onClick={() => setConfirmingDelete(true)} className="rounded-full border border-ink/15 px-3.5 py-1.5 text-sm text-ink/40">
+                    Delete
+                  </button>
+                )}
                 <button onClick={onClose} className="rounded-full px-3 py-1 text-2xl leading-none text-ink/40 hover:bg-ink/5" aria-label="Close">×</button>
               </div>
             </div>

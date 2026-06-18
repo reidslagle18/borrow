@@ -222,6 +222,15 @@ export default function ReturnsPage() {
     loadAll();
   }, []);
 
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+  async function deleteRental(rentalId: number) {
+    const res = await fetch(`/api/rentals/${rentalId}`, { method: "DELETE" });
+    if (res.ok) {
+      setRecent((prev) => prev.filter((r) => r.id !== rentalId));
+      setConfirmDelete(null);
+    }
+  }
+
   const out = useMemo(
     () =>
       rentals
@@ -414,6 +423,22 @@ export default function ReturnsPage() {
                         <span className="shrink-0 rounded-full bg-sage px-2.5 py-1 text-[11px]">
                           ok
                         </span>
+                      )}
+                      {confirmDelete === r.id ? (
+                        <button
+                          onClick={() => deleteRental(r.id)}
+                          className="shrink-0 rounded-full border border-blush-deep px-2.5 py-1 text-[11px] text-blush-deep"
+                        >
+                          Delete?
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmDelete(r.id)}
+                          className="shrink-0 rounded-full px-2 text-lg leading-none text-ink/30 hover:bg-ink/5"
+                          aria-label="Delete return"
+                        >
+                          ×
+                        </button>
                       )}
                     </div>
                   ))}
