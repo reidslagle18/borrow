@@ -56,7 +56,7 @@ async function createSchema(): Promise<void> {
       consignor_id INT REFERENCES consignors(id),
       event_types TEXT[] NOT NULL DEFAULT '{}',
       status TEXT NOT NULL DEFAULT 'available'
-        CHECK (status IN ('available','reserved','rented','cleaning','retired')),
+        CHECK (status IN ('available','reserved','rented','cleaning','retired','with_consignor')),
       location TEXT,
       photo_url TEXT,
       photos TEXT[] NOT NULL DEFAULT '{}',
@@ -94,6 +94,10 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE items DROP CONSTRAINT IF EXISTS items_ownership_check`;
   await sql`ALTER TABLE items ADD CONSTRAINT items_ownership_check
     CHECK (ownership IN ('owned','consignment','ambassador'))`;
+  // Allow the 'with_consignor' hold status (consignor borrowing their own piece).
+  await sql`ALTER TABLE items DROP CONSTRAINT IF EXISTS items_status_check`;
+  await sql`ALTER TABLE items ADD CONSTRAINT items_status_check
+    CHECK (status IN ('available','reserved','rented','cleaning','retired','with_consignor'))`;
 
   // Barcode is the scannable identifier — unique where present. Partial index
   // so legacy rows without a barcode don't collide on NULL.

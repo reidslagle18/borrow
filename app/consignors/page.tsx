@@ -38,6 +38,7 @@ const STATUS_BADGE: Record<ItemStatus, string> = {
   rented: "bg-blush",
   cleaning: "bg-butter",
   retired: "bg-ink/10 text-ink/60",
+  with_consignor: "bg-lavender-deep/30 text-ink",
 };
 
 function money(n: number | string): string {
@@ -206,6 +207,23 @@ function DetailModal({
       onChanged();
     }
     setPaySaving(false);
+  }
+
+  async function consignorAction(itemId: string, action: string) {
+    setBusyItem(itemId);
+    const res = await fetch(`/api/items/${itemId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    if (res.ok) {
+      await load();
+      onChanged();
+    } else {
+      const d = await res.json().catch(() => ({}));
+      alert(d.error || "Couldn't update this piece.");
+    }
+    setBusyItem(null);
   }
 
   async function returnPiece(itemId: string) {
@@ -431,13 +449,38 @@ function DetailModal({
                             </button>
                           </div>
                         </div>
+                      ) : i.status === "with_consignor" ? (
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <button
+                            onClick={() => consignorAction(i.id, "consignor_return")}
+                            disabled={busyItem === i.id}
+                            className="rounded-full border border-sage-deep px-3 py-1.5 text-[12px] text-ink/70 disabled:opacity-40"
+                          >
+                            Mark returned
+                          </button>
+                          <span className="text-[11px] text-ink/40">must come back clean</span>
+                        </div>
                       ) : (
-                        <button
-                          onClick={() => setConfirmReturn(i.id)}
-                          className="shrink-0 rounded-full border border-ink/15 px-3 py-1.5 text-[12px] text-ink/50"
-                        >
-                          Return to her
-                        </button>
+                        <div className="flex shrink-0 gap-1.5">
+                          {(i.status === "available" ||
+                            i.status === "reserved" ||
+                            i.status === "cleaning") && (
+                            <button
+                              onClick={() => consignorAction(i.id, "consignor_take")}
+                              disabled={busyItem === i.id}
+                              className="rounded-full border border-ink/15 px-3 py-1.5 text-[12px] text-ink/50 disabled:opacity-40"
+                              title="Consignor borrows their own piece (free, returned clean)"
+                            >
+                              Lend to her
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setConfirmReturn(i.id)}
+                            className="rounded-full border border-ink/15 px-3 py-1.5 text-[12px] text-ink/50"
+                          >
+                            Return to her
+                          </button>
+                        </div>
                       ))}
                   </div>
                 ))

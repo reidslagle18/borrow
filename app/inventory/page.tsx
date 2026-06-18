@@ -22,6 +22,7 @@ const STATUS_STYLES: Record<ItemStatus, string> = {
   rented: "bg-blush text-ink",
   cleaning: "bg-butter text-ink",
   retired: "bg-ink/10 text-ink/60",
+  with_consignor: "bg-lavender-deep/30 text-ink",
 };
 
 function money(n: number | string): string {

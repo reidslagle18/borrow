@@ -68,6 +68,56 @@ export async function PATCH(request: Request, ctx: Ctx) {
     return NextResponse.json(rows[0]);
   }
 
+  // A consignor borrows their own piece back — free, open-ended, blocked from
+  // others until returned. Stays in the system as 'with_consignor'.
+  if (b.action === "consignor_take") {
+    const live = await sql`
+      SELECT id FROM rentals WHERE item_id = ${id} AND status IN ('reserved','active')
+    `;
+    if (live.length > 0) {
+      return NextResponse.json(
+        { error: "This piece has live bookings — cancel or complete them first" },
+        { status: 400 }
+      );
+    }
+    const rows = await sql`
+      UPDATE items SET
+        status = 'with_consignor',
+        condition_notes = COALESCE(condition_notes || E'\n', '') ||
+          '[' || CURRENT_DATE || '] Out to consignor — must be returned clean',
+        updated_at = now()
+      WHERE id = ${id} AND ownership = 'consignment'
+        AND status NOT IN ('retired','rented')
+      RETURNING *
+    `;
+    if (rows.length === 0) {
+      return NextResponse.json(
+        { error: "Only an available consignment piece can go out to its consignor" },
+        { status: 400 }
+      );
+    }
+    return NextResponse.json(rows[0]);
+  }
+
+  if (b.action === "consignor_return") {
+    const rows = await sql`
+      UPDATE items SET
+        status = 'available',
+        condition_notes = COALESCE(condition_notes || E'\n', '') ||
+          '[' || CURRENT_DATE || '] Returned by consignor',
+        updated_at = now()
+      WHERE id = ${id} AND status = 'with_consignor'
+      RETURNING *
+    `;
+    if (rows.length === 0) {
+      return NextResponse.json(
+        { error: "This piece isn't currently out to its consignor" },
+        { status: 400 }
+      );
+    }
+    return NextResponse.json(rows[0]);
+  }
+
   if (b.action === "rack") {
     const rows = await sql`
       UPDATE items SET status = CASE

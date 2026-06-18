@@ -46,6 +46,13 @@ export async function createBooking(b: BookingInput): Promise<BookingResult> {
   if (item[0].status === "retired") {
     return { ok: false, status: 400, error: "This piece is retired" };
   }
+  if (item[0].status === "with_consignor") {
+    return {
+      ok: false,
+      status: 400,
+      error: "This piece is out with its consignor right now",
+    };
+  }
 
   const conflicts = await sql`
     SELECT r.id, r.start_date, r.due_date, c.name AS customer_name

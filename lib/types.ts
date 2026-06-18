@@ -5,7 +5,8 @@ export type ItemStatus =
   | "reserved"
   | "rented"
   | "cleaning"
-  | "retired";
+  | "retired"
+  | "with_consignor";
 
 export interface Consignor {
   id: number;
@@ -278,6 +279,7 @@ export const STATUSES: { value: ItemStatus; label: string }[] = [
   { value: "reserved", label: "Reserved" },
   { value: "rented", label: "Rented Out" },
   { value: "cleaning", label: "Being Cleaned" },
+  { value: "with_consignor", label: "With consignor" },
   { value: "retired", label: "Retired" },
 ];
 

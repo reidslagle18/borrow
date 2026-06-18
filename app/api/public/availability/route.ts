@@ -24,7 +24,7 @@ export async function GET() {
       ON r.item_id = i.id
      AND r.status IN ('reserved','active')
      AND r.due_date >= CURRENT_DATE
-    WHERE i.status != 'retired'
+    WHERE i.status NOT IN ('retired', 'with_consignor')
     GROUP BY i.id
     ORDER BY i.created_at DESC
   `;
