@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { sendReceipt, sendConsignorRentedEmail, ReceiptLine } from "@/lib/email";
-import { DAMAGE_WAIVER, CONSIGNOR_SHARE } from "@/lib/types";
+import { CONSIGNOR_SHARE } from "@/lib/types";
 import {
   getProgram,
   ensureCurrentPeriod,
@@ -155,8 +155,9 @@ export async function POST(request: Request) {
     }));
   }
 
+  const cleaningFee = program.cleaning_fee;
   const subtotal = plan.reduce((s, p) => s + p.charge, 0);
-  const waiverTotal = plan.filter((p) => p.waiver).length * DAMAGE_WAIVER;
+  const waiverTotal = plan.filter((p) => p.waiver).length * cleaningFee;
   const total = subtotal + waiverTotal;
 
   // One transaction row for the whole checkout.
@@ -181,10 +182,11 @@ export async function POST(request: Request) {
     await sql`
       INSERT INTO rentals (
         item_id, customer_id, start_date, due_date, status,
-        rental_price, damage_waiver, source, transaction_id
+        rental_price, damage_waiver, cleaning_fee, source, transaction_id
       ) VALUES (
         ${p.item.id}, ${b.customer_id ?? null}, ${b.start_date}, ${b.due_date},
-        'active', ${p.charge}, ${p.waiver}, 'checkout', ${tx.id}
+        'active', ${p.charge}, ${p.waiver}, ${p.waiver ? cleaningFee : 0},
+        'checkout', ${tx.id}
       )
     `;
     await sql`
@@ -246,7 +248,7 @@ export async function POST(request: Request) {
       brand: p.item.brand,
       barcode: p.item.barcode || p.item.id,
       rental_price: p.charge,
-      waiver: p.waiver ? DAMAGE_WAIVER : 0,
+      waiver: p.waiver ? cleaningFee : 0,
     }));
     const result = await sendReceipt({
       to: recipient,

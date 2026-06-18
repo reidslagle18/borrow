@@ -4,11 +4,11 @@ import { CONSIGNOR_SHARE } from "@/lib/types";
 
 /**
  * Money rules:
- * - A rental counts (and its price + $5 waiver are earned) once it's picked
- *   up — status active or completed — attributed to its start_date.
+ * - A rental counts (and its price + Cleaning & Care Fee are earned) once it's
+ *   picked up — status active or completed — attributed to its start_date.
  * - Late fees are attributed to the returned_date.
- * - On consignment pieces BORROW keeps 40% of the rental price; waivers and
- *   late fees are 100% BORROW.
+ * - On consignment pieces BORROW keeps 40% of the rental price; the Cleaning &
+ *   Care Fee and late fees are 100% BORROW.
  */
 export async function GET(request: Request) {
   await ensureSchema();
@@ -28,7 +28,7 @@ export async function GET(request: Request) {
       ? await sql`
           SELECT COUNT(*)::int AS rentals,
                  COALESCE(SUM(rental_price), 0) AS rental_revenue,
-                 COALESCE(SUM(CASE WHEN damage_waiver THEN 5 ELSE 0 END), 0) AS waiver_revenue
+                 COALESCE(SUM(CASE WHEN cleaning_fee > 0 THEN cleaning_fee WHEN damage_waiver THEN 5 ELSE 0 END), 0) AS cleaning_fee_revenue
           FROM rentals
           WHERE status IN ('active','completed')
             AND start_date >= ${from} AND start_date <= ${today}
@@ -36,7 +36,7 @@ export async function GET(request: Request) {
       : await sql`
           SELECT COUNT(*)::int AS rentals,
                  COALESCE(SUM(rental_price), 0) AS rental_revenue,
-                 COALESCE(SUM(CASE WHEN damage_waiver THEN 5 ELSE 0 END), 0) AS waiver_revenue
+                 COALESCE(SUM(CASE WHEN cleaning_fee > 0 THEN cleaning_fee WHEN damage_waiver THEN 5 ELSE 0 END), 0) AS cleaning_fee_revenue
           FROM rentals
           WHERE status IN ('active','completed')
         `;
@@ -53,14 +53,14 @@ export async function GET(request: Request) {
         `;
     const r = rentalAgg[0];
     const rental_revenue = Number(r.rental_revenue);
-    const waiver_revenue = Number(r.waiver_revenue);
+    const cleaning_fee_revenue = Number(r.cleaning_fee_revenue);
     const late_fees = Number(feeAgg[0].late_fees);
     return {
       rentals: r.rentals,
       rental_revenue,
-      waiver_revenue,
+      cleaning_fee_revenue,
       late_fees,
-      total: rental_revenue + waiver_revenue + late_fees,
+      total: rental_revenue + cleaning_fee_revenue + late_fees,
     };
   }
 

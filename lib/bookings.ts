@@ -1,4 +1,5 @@
 import { sql } from "@/lib/db";
+import { getProgram } from "@/lib/credits";
 
 export interface BookingInput {
   item_id: string;
@@ -62,13 +63,16 @@ export async function createBooking(b: BookingInput): Promise<BookingResult> {
     };
   }
 
+  // The Cleaning & Care Fee is charged when the waiver flag is set; store the
+  // actual configured amount so finances reflect it (see app/api/finances).
+  const fee = b.damage_waiver ? (await getProgram()).cleaning_fee : 0;
   const rows = await sql`
     INSERT INTO rentals (
       item_id, customer_id, start_date, due_date, status,
-      rental_price, damage_waiver, notes, source
+      rental_price, damage_waiver, cleaning_fee, notes, source
     ) VALUES (
       ${b.item_id}, ${b.customer_id}, ${b.start_date}, ${b.due_date},
-      'reserved', ${b.rental_price}, ${b.damage_waiver}, ${b.notes}, ${b.source}
+      'reserved', ${b.rental_price}, ${b.damage_waiver}, ${fee}, ${b.notes}, ${b.source}
     )
     RETURNING *
   `;

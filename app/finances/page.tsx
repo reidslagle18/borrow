@@ -8,7 +8,7 @@ import { toISO, todayISO } from "@/lib/dates";
 type Period = {
   rentals: number;
   rental_revenue: number;
-  waiver_revenue: number;
+  cleaning_fee_revenue: number;
   late_fees: number;
   total: number;
 };
@@ -67,8 +67,8 @@ function PeriodCard({ title, p }: { title: string; p: Period }) {
           <span>{money(p.rental_revenue)}</span>
         </div>
         <div className="flex justify-between">
-          <span>Damage waivers</span>
-          <span>{money(p.waiver_revenue)}</span>
+          <span>Cleaning &amp; Care Fees</span>
+          <span>{money(p.cleaning_fee_revenue)}</span>
         </div>
         <div className="flex justify-between">
           <span>Late fees</span>

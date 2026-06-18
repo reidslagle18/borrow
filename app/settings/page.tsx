@@ -115,20 +115,37 @@ export default function SettingsPage() {
                   </div>
                 </div>
               ))}
-              <div className="mt-4 max-w-[12rem]">
-                <label className={labelCls}>Ambassador rate ($ / cleaning cost)</label>
-                <input
-                  type="number"
-                  min={0}
-                  className={inputCls}
-                  value={program.cleaning_rate}
-                  onChange={(e) =>
-                    setProgram((p) => ({
-                      ...p,
-                      cleaning_rate: Math.max(0, Math.floor(Number(e.target.value) || 0)),
-                    }))
-                  }
-                />
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <div>
+                  <label className={labelCls}>Cleaning &amp; Care Fee ($ / paying rental)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    className={inputCls}
+                    value={program.cleaning_fee}
+                    onChange={(e) =>
+                      setProgram((p) => ({
+                        ...p,
+                        cleaning_fee: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                      }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className={labelCls}>Ambassador $-rate ($ / cleaning cost)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    className={inputCls}
+                    value={program.cleaning_rate}
+                    onChange={(e) =>
+                      setProgram((p) => ({
+                        ...p,
+                        cleaning_rate: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                      }))
+                    }
+                  />
+                </div>
               </div>
               <p className="mt-3 text-[12px] text-ink/45">
                 Curators also earn +1 bonus free credit each time a piece they proposed is accepted.

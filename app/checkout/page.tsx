@@ -8,7 +8,7 @@ import { beep } from "@/lib/scanSound";
 import {
   Item,
   Customer,
-  DAMAGE_WAIVER,
+  CLEANING_FEE_DEFAULT,
   RENTAL_DAYS,
   AGREEMENT_TERMS,
   tierLabel,
@@ -53,6 +53,7 @@ export default function CheckoutPage() {
   const [agreementName, setAgreementName] = useState("");
 
   const [ambCustomerIds, setAmbCustomerIds] = useState<Set<number>>(new Set());
+  const [cleaningFee, setCleaningFee] = useState<number>(CLEANING_FEE_DEFAULT);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState<{
@@ -66,14 +67,19 @@ export default function CheckoutPage() {
   useEffect(() => {
     (async () => {
       try {
-        const [ir, cr, ar] = await Promise.all([
+        const [ir, cr, ar, sr] = await Promise.all([
           fetch("/api/items"),
           fetch("/api/customers"),
           fetch("/api/ambassadors"),
+          fetch("/api/settings"),
         ]);
         if (!ir.ok) throw new Error("items");
         setItems(await ir.json());
         if (cr.ok) setCustomers(await cr.json());
+        if (sr.ok) {
+          const s = await sr.json();
+          if (s.program?.cleaning_fee != null) setCleaningFee(s.program.cleaning_fee);
+        }
         if (ar.ok) {
           const amb = await ar.json();
           setAmbCustomerIds(
@@ -119,7 +125,7 @@ export default function CheckoutPage() {
   }, [customers, customerQuery]);
 
   const subtotal = selected.reduce((s, i) => s + Number(i.rental_price), 0);
-  const waiverTotal = selected.length * DAMAGE_WAIVER;
+  const waiverTotal = selected.length * cleaningFee;
   const total = subtotal + waiverTotal;
 
   function addPiece(item: Item): { ok: boolean; msg: string } {
@@ -396,7 +402,7 @@ export default function CheckoutPage() {
                     <p className="text-[13px] text-ink/50">
                       <span className="font-mono">{i.barcode || i.id}</span> ·{" "}
                       {tierLabel(i.tier)} · {money(Number(i.rental_price))} +{" "}
-                      {money(DAMAGE_WAIVER)} waiver
+                      {money(cleaningFee)} cleaning
                     </p>
                   </div>
                   <button
@@ -589,7 +595,7 @@ export default function CheckoutPage() {
           </div>
           <div className="mt-1.5 flex justify-between text-sm text-ink/60">
             <span>
-              Damage waivers ({selected.length} × {money(DAMAGE_WAIVER)})
+              Cleaning &amp; Care Fee ({selected.length} × {money(cleaningFee)})
             </span>
             <span>{money(waiverTotal)}</span>
           </div>

@@ -41,6 +41,7 @@ export async function PUT(request: Request) {
       },
     },
     cleaning_rate: num(p.cleaning_rate, DEFAULT_PROGRAM.cleaning_rate),
+    cleaning_fee: num(p.cleaning_fee, DEFAULT_PROGRAM.cleaning_fee),
     blackout_dates: dates,
     posting_target: num(p.posting_target, DEFAULT_PROGRAM.posting_target),
   };

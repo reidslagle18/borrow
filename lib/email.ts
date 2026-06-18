@@ -103,7 +103,7 @@ function receiptHtml(d: ReceiptData): string {
             ${l.brand} <span style="color:#999;font-family:monospace;">${l.barcode}</span>
           </td>
           <td style="padding:8px 0;border-bottom:1px solid #eee;text-align:right;">
-            ${money(l.rental_price)} + ${money(l.waiver)} waiver
+            ${money(l.rental_price)}${l.waiver ? ` + ${money(l.waiver)} cleaning` : ""}
           </td>
         </tr>`
     )
@@ -119,7 +119,7 @@ function receiptHtml(d: ReceiptData): string {
     <table style="width:100%;border-collapse:collapse;font-family:Helvetica,Arial,sans-serif;font-size:14px;margin:16px 0;">
       ${rows}
       <tr><td style="padding:8px 0;">Subtotal</td><td style="padding:8px 0;text-align:right;">${money(d.subtotal)}</td></tr>
-      <tr><td style="padding:4px 0;">Damage waivers</td><td style="padding:4px 0;text-align:right;">${money(d.waiverTotal)}</td></tr>
+      <tr><td style="padding:4px 0;">Cleaning &amp; Care Fee</td><td style="padding:4px 0;text-align:right;">${money(d.waiverTotal)}</td></tr>
       <tr><td style="padding:8px 0;font-weight:bold;border-top:2px solid #1a1a1a;">Total</td>
           <td style="padding:8px 0;text-align:right;font-weight:bold;border-top:2px solid #1a1a1a;">${money(d.total)}</td></tr>
     </table>

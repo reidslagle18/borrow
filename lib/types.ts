@@ -52,8 +52,12 @@ export interface Item {
 /** Consignors earn 60% of each completed rental; BORROW keeps 40%. */
 export const CONSIGNOR_SHARE = 0.6;
 
-/** Mandatory damage waiver added to every rented piece, in dollars. */
-export const DAMAGE_WAIVER = 5;
+/**
+ * Default Cleaning & Care Fee added to every paying rental, in dollars.
+ * The live amount is configurable via the ambassador-program settings
+ * (program.cleaning_fee); this is only the fallback default.
+ */
+export const CLEANING_FEE_DEFAULT = 6;
 
 /** Standard rental window, in days. */
 export const RENTAL_DAYS = 7;
@@ -61,9 +65,9 @@ export const RENTAL_DAYS = 7;
 /** Rental agreement terms shown at checkout and included in the receipt. */
 export const AGREEMENT_TERMS = [
   "Pieces are rented for a 7-day window and are due back by the due date.",
-  "A $5 non-refundable damage waiver per piece covers minor wear; it does not cover loss, theft, or major damage.",
+  "A Cleaning & Care Fee is added to every paying rental.",
+  "The Cleaning & Care Fee covers professional cleaning and standard handling only. It is not damage insurance. The renter is responsible for the cost of repairing or replacing any item that is damaged beyond normal wear, stained beyond cleaning, lost, or not returned, up to the item's full replacement value.",
   "Late returns are charged $15 per piece per day past the due date.",
-  "Pieces must be returned in their rented condition; the renter is responsible for loss or damage beyond normal wear.",
 ];
 
 export interface Transaction {
@@ -147,6 +151,7 @@ export interface AmbassadorProgram {
     poster: { free: number; rate: number };
   };
   cleaning_rate: number; // the "$6" ambassador rate
+  cleaning_fee: number; // Cleaning & Care Fee added to every paying rental
   blackout_dates: string[]; // YYYY-MM-DD; perks suppressed on these days
   posting_target: number; // posts expected per ambassador per month
 }
@@ -157,6 +162,7 @@ export const DEFAULT_PROGRAM: AmbassadorProgram = {
     poster: { free: 1, rate: 2 },
   },
   cleaning_rate: 6,
+  cleaning_fee: 6,
   blackout_dates: [],
   posting_target: 3,
 };

@@ -170,6 +170,10 @@ async function createSchema(): Promise<void> {
   `;
   // Link rentals to their checkout transaction (additive; existing rows null).
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS transaction_id INT REFERENCES transactions(id)`;
+  // Actual Cleaning & Care Fee charged on this rental (the damage_waiver boolean
+  // is retained as "fee charged?"). Stored so finances reflect the real amount
+  // rather than a hardcoded multiplier; legacy rows fall back to $5 in queries.
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS cleaning_fee NUMERIC(8,2) NOT NULL DEFAULT 0`;
 
   // Ambassadors: Curators (propose pieces) and Posters (rotate monthly). Each
   // links to their own customer record (they rent) and optionally a consignor

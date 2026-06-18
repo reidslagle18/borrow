@@ -24,7 +24,7 @@ export async function GET(_req: Request, ctx: Ctx) {
       (s, r) =>
         s +
         Number(r.rental_price) +
-        (r.damage_waiver ? 5 : 0) +
+        (Number(r.cleaning_fee) || (r.damage_waiver ? 5 : 0)) +
         Number(r.late_fee),
       0
     );
