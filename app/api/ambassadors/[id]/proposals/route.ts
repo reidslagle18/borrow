@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
+import { ensureCurrentPeriod } from "@/lib/credits";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -30,14 +31,34 @@ export async function PATCH(request: Request, ctx: Ctx) {
   if (!b.proposal_id) {
     return NextResponse.json({ error: "proposal_id required" }, { status: 400 });
   }
+  const existing = await sql`
+    SELECT accepted FROM ambassador_proposals
+    WHERE id = ${b.proposal_id} AND ambassador_id = ${id}
+  `;
+  if (existing.length === 0) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  const was = existing[0].accepted;
+  const now = !!b.accepted;
   const rows = await sql`
     UPDATE ambassador_proposals
-    SET accepted = ${!!b.accepted}
+    SET accepted = ${now}
     WHERE id = ${b.proposal_id} AND ambassador_id = ${id}
     RETURNING *
   `;
-  if (rows.length === 0) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Curator bonus: +1 free credit when a proposed piece is accepted; remove it
+  // if un-accepted. Only meaningful for curators (who have proposals).
+  if (was !== now) {
+    const ambRows = await sql`SELECT * FROM ambassadors WHERE id = ${id}`;
+    if (ambRows.length > 0 && ambRows[0].tier === "curator") {
+      await ensureCurrentPeriod(ambRows[0]);
+      if (now) {
+        await sql`UPDATE ambassadors SET bonus_earned = bonus_earned + 1 WHERE id = ${id}`;
+      } else {
+        await sql`UPDATE ambassadors SET bonus_earned = GREATEST(bonus_earned - 1, 0) WHERE id = ${id}`;
+      }
+    }
   }
   return NextResponse.json(rows[0]);
 }

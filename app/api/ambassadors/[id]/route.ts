@@ -1,11 +1,25 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
+import {
+  getProgram,
+  ensureCurrentPeriod,
+  remainingCredits,
+} from "@/lib/credits";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: Request, ctx: Ctx) {
   await ensureSchema();
   const { id } = await ctx.params;
+
+  const base = await sql`SELECT * FROM ambassadors WHERE id = ${id}`;
+  if (base.length === 0) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  // Lazily roll credits into the current month before reading remaining.
+  const amb = await ensureCurrentPeriod(base[0]);
+  const program = await getProgram();
+  const credits = remainingCredits(amb, program);
 
   const rows = await sql`
     SELECT a.*, c.name AS customer_name, cons.name AS consignor_name
@@ -14,9 +28,6 @@ export async function GET(_req: Request, ctx: Ctx) {
     LEFT JOIN consignors cons ON cons.id = a.consignor_id
     WHERE a.id = ${id}
   `;
-  if (rows.length === 0) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
   const sourced = await sql`
     SELECT id, brand, barcode, size, color, status, photo_url, rental_count
     FROM items WHERE ambassador_id = ${id}
@@ -27,7 +38,12 @@ export async function GET(_req: Request, ctx: Ctx) {
     WHERE ambassador_id = ${id}
     ORDER BY id ASC
   `;
-  return NextResponse.json({ ...rows[0], sourced_items: sourced, proposals });
+  return NextResponse.json({
+    ...rows[0],
+    credits,
+    sourced_items: sourced,
+    proposals,
+  });
 }
 
 export async function PATCH(request: Request, ctx: Ctx) {

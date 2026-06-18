@@ -12,6 +12,7 @@ const NAV = [
   { href: "/ambassadors", label: "Ambassadors", ready: true },
   { href: "/finances", label: "Finances", ready: true },
   { href: "/customers", label: "Customers", ready: true },
+  { href: "/settings", label: "Settings", ready: true },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {

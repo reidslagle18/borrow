@@ -7,6 +7,7 @@ import {
   AmbassadorProposal,
   AmbassadorTier,
   AmbassadorStatus,
+  AmbassadorCredits,
   AMBASSADOR_TIERS,
   AMBASSADOR_STATUSES,
   MONTHS,
@@ -37,6 +38,7 @@ type SourcedItem = {
 type Detail = Ambassador & {
   customer_name: string | null;
   consignor_name: string | null;
+  credits: AmbassadorCredits;
   sourced_items: SourcedItem[];
   proposals: AmbassadorProposal[];
 };
@@ -437,6 +439,26 @@ function DetailModal({ id, onClose, onChanged }: { id: number; onClose: () => vo
                 )}
               </div>
             </div>
+
+            {/* Monthly perk credits */}
+            <h3 className="mt-6 text-xl font-medium">This month&apos;s credits</h3>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              <div className="rounded-2xl bg-white p-4 text-center">
+                <p className="font-serif text-2xl font-semibold">{detail.credits.free}</p>
+                <p className="text-[11px] uppercase tracking-[0.15em] text-ink/45">Free left</p>
+              </div>
+              <div className="rounded-2xl bg-white p-4 text-center">
+                <p className="font-serif text-2xl font-semibold">{detail.credits.rate}</p>
+                <p className="text-[11px] uppercase tracking-[0.15em] text-ink/45">$6 rate left</p>
+              </div>
+              <div className="rounded-2xl bg-butter/50 p-4 text-center">
+                <p className="font-serif text-2xl font-semibold">{detail.credits.bonus}</p>
+                <p className="text-[11px] uppercase tracking-[0.15em] text-ink/45">Bonus left</p>
+              </div>
+            </div>
+            <p className="mt-1.5 text-[12px] text-ink/45">
+              Resets on the 1st. Applied automatically at checkout (free → bonus → $6 → full).
+            </p>
 
             {/* Curator proposals */}
             {detail.tier === "curator" && (

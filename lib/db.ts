@@ -202,6 +202,24 @@ async function createSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+
+  // Monthly perk-credit tracking per ambassador. credit_period is the YYYY-MM
+  // these counters belong to; when a new month is seen the counters are reset
+  // lazily (see lib/credits.ts), so no cron is needed.
+  await sql`ALTER TABLE ambassadors ADD COLUMN IF NOT EXISTS credit_period TEXT`;
+  await sql`ALTER TABLE ambassadors ADD COLUMN IF NOT EXISTS free_used INT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE ambassadors ADD COLUMN IF NOT EXISTS rate_used INT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE ambassadors ADD COLUMN IF NOT EXISTS bonus_earned INT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE ambassadors ADD COLUMN IF NOT EXISTS bonus_used INT NOT NULL DEFAULT 0`;
+
+  // Key/value app settings (ambassador credit config + blackout dates).
+  await sql`
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */

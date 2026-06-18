@@ -125,7 +125,39 @@ export interface Ambassador {
   consignor_id: number | null;
   notes: string | null;
   created_at: string;
+  // monthly perk-credit counters (reset on the 1st; see lib/credits.ts)
+  credit_period: string | null;
+  free_used: number;
+  rate_used: number;
+  bonus_earned: number;
+  bonus_used: number;
 }
+
+/** Remaining perk credits for the current month, after a lazy reset. */
+export interface AmbassadorCredits {
+  free: number; // base free rentals remaining
+  rate: number; // $6-rate rentals remaining
+  bonus: number; // earned bonus free rentals remaining
+}
+
+/** Configurable ambassador-program settings (stored in app_settings). */
+export interface AmbassadorProgram {
+  credits: {
+    curator: { free: number; rate: number };
+    poster: { free: number; rate: number };
+  };
+  cleaning_rate: number; // the "$6" ambassador rate
+  blackout_dates: string[]; // YYYY-MM-DD; perks suppressed on these days
+}
+
+export const DEFAULT_PROGRAM: AmbassadorProgram = {
+  credits: {
+    curator: { free: 2, rate: 3 },
+    poster: { free: 1, rate: 2 },
+  },
+  cleaning_rate: 6,
+  blackout_dates: [],
+};
 
 /** A piece a Curator proposed, and whether BORROW accepted it. */
 export interface AmbassadorProposal {

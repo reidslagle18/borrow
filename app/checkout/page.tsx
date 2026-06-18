@@ -51,27 +51,44 @@ export default function CheckoutPage() {
   const [accepted, setAccepted] = useState(false);
   const [agreementName, setAgreementName] = useState("");
 
+  const [ambCustomerIds, setAmbCustomerIds] = useState<Set<number>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [done, setDone] = useState<{ id: number; emailSent: boolean } | null>(
-    null
-  );
+  const [done, setDone] = useState<{
+    id: number;
+    emailSent: boolean;
+    ambassadorApplied: boolean;
+    blackout: boolean;
+  } | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const [ir, cr] = await Promise.all([
+        const [ir, cr, ar] = await Promise.all([
           fetch("/api/items"),
           fetch("/api/customers"),
+          fetch("/api/ambassadors"),
         ]);
         if (!ir.ok) throw new Error("items");
         setItems(await ir.json());
         if (cr.ok) setCustomers(await cr.json());
+        if (ar.ok) {
+          const amb = await ar.json();
+          setAmbCustomerIds(
+            new Set(
+              amb
+                .map((a: { customer_id: number | null }) => a.customer_id)
+                .filter((v: number | null): v is number => v != null)
+            )
+          );
+        }
       } catch {
         setLoadError("Couldn't load inventory — refresh to try again.");
       }
     })();
   }, []);
+
+  const isAmbassador = customerId !== "" && ambCustomerIds.has(customerId);
 
   const byId = useMemo(() => {
     const m = new Map<string, Item>();
@@ -199,7 +216,12 @@ export default function CheckoutPage() {
     });
     if (res.ok) {
       const data = await res.json();
-      setDone({ id: data.transaction.id, emailSent: data.email_sent });
+      setDone({
+        id: data.transaction.id,
+        emailSent: data.email_sent,
+        ambassadorApplied: !!data.ambassador_applied,
+        blackout: !!data.blackout,
+      });
     } else {
       const data = await res.json().catch(() => ({}));
       setError(data.error || "Checkout failed — try again.");
@@ -238,6 +260,16 @@ export default function CheckoutPage() {
               ? "Receipt emailed to the customer."
               : "Receipt email not sent (email isn't configured yet)."}
           </p>
+          {done.ambassadorApplied && (
+            <p className="mt-1 text-sm text-sage-deep">
+              Ambassador credits applied automatically.
+            </p>
+          )}
+          {done.blackout && (
+            <p className="mt-1 text-sm text-blush-deep">
+              Blackout date — full price charged (ambassador perks suppressed).
+            </p>
+          )}
           <div className="mt-8 flex justify-center gap-3">
             <button
               onClick={reset}
@@ -479,6 +511,14 @@ export default function CheckoutPage() {
             </div>
           )}
         </section>
+
+        {isAmbassador && (
+          <div className="mt-3 rounded-2xl bg-sage/30 px-4 py-3 text-sm text-ink/70">
+            ✦ This customer is an ambassador — their monthly perk credits apply
+            automatically (free → bonus → $6 → full), unless the start date is a
+            blackout day.
+          </div>
+        )}
 
         {/* Dates */}
         <section className="mt-7 grid grid-cols-2 gap-3">

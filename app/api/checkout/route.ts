@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { sendReceipt, sendConsignorRentedEmail, ReceiptLine } from "@/lib/email";
 import { DAMAGE_WAIVER, CONSIGNOR_SHARE } from "@/lib/types";
+import {
+  getProgram,
+  ensureCurrentPeriod,
+  remainingCredits,
+  isBlackout,
+} from "@/lib/credits";
 
 interface CheckoutBody {
   customer_id?: number | null;
@@ -86,8 +92,70 @@ export async function POST(request: Request) {
     );
   }
 
-  const subtotal = items.reduce((s, i) => s + Number(i.rental_price), 0);
-  const waiverTotal = items.length * DAMAGE_WAIVER;
+  // --- Ambassador perk credits ---------------------------------------------
+  // If the customer is a linked ambassador (and the start date isn't a peak
+  // blackout day), apply credits per piece: free, then bonus (also free), then
+  // the $6 cleaning rate, then full price. Pricier pieces get the free credits
+  // first to maximize the ambassador's benefit.
+  type Plan = { item: (typeof items)[number]; charge: number; waiver: boolean; kind: string };
+  let plan: Plan[];
+  let ambassador: { id: number } | null = null;
+  const program = await getProgram();
+  const blackout = isBlackout(b.start_date, program);
+
+  let amb = b.customer_id
+    ? (await sql`SELECT * FROM ambassadors WHERE customer_id = ${b.customer_id} LIMIT 1`)[0]
+    : null;
+
+  if (amb && !blackout) {
+    amb = await ensureCurrentPeriod(amb);
+    const rem = remainingCredits(amb, program);
+    let { free, bonus, rate } = rem;
+    let freeUsed = 0,
+      bonusUsed = 0,
+      rateUsed = 0;
+    ambassador = { id: amb.id };
+
+    const ordered = [...items].sort(
+      (a, c) => Number(c.rental_price) - Number(a.rental_price)
+    );
+    plan = ordered.map((item) => {
+      if (free > 0) {
+        free--;
+        freeUsed++;
+        return { item, charge: 0, waiver: false, kind: "free" };
+      }
+      if (bonus > 0) {
+        bonus--;
+        bonusUsed++;
+        return { item, charge: 0, waiver: false, kind: "bonus" };
+      }
+      if (rate > 0) {
+        rate--;
+        rateUsed++;
+        return { item, charge: program.cleaning_rate, waiver: false, kind: "rate" };
+      }
+      return { item, charge: Number(item.rental_price), waiver: true, kind: "full" };
+    });
+
+    await sql`
+      UPDATE ambassadors SET
+        free_used = free_used + ${freeUsed},
+        bonus_used = bonus_used + ${bonusUsed},
+        rate_used = rate_used + ${rateUsed}
+      WHERE id = ${amb.id}
+    `;
+  } else {
+    plan = items.map((item) => ({
+      item,
+      charge: Number(item.rental_price),
+      waiver: true,
+      kind: "full",
+    }));
+  }
+
+  const subtotal = plan.reduce((s, p) => s + p.charge, 0);
+  const waiverTotal = plan.filter((p) => p.waiver).length * DAMAGE_WAIVER;
   const total = subtotal + waiverTotal;
 
   // One transaction row for the whole checkout.
@@ -108,19 +176,19 @@ export async function POST(request: Request) {
 
   // One active rental per piece, linked to the transaction, and flip each
   // piece to Rented Out (mirrors the rental "pickup" action).
-  for (const item of items) {
+  for (const p of plan) {
     await sql`
       INSERT INTO rentals (
         item_id, customer_id, start_date, due_date, status,
         rental_price, damage_waiver, source, transaction_id
       ) VALUES (
-        ${item.id}, ${b.customer_id ?? null}, ${b.start_date}, ${b.due_date},
-        'active', ${item.rental_price}, true, 'checkout', ${tx.id}
+        ${p.item.id}, ${b.customer_id ?? null}, ${b.start_date}, ${b.due_date},
+        'active', ${p.charge}, ${p.waiver}, 'checkout', ${tx.id}
       )
     `;
     await sql`
       UPDATE items SET status = 'rented', rental_count = rental_count + 1, updated_at = now()
-      WHERE id = ${item.id}
+      WHERE id = ${p.item.id}
     `;
   }
 
@@ -156,11 +224,11 @@ export async function POST(request: Request) {
     customerName = c[0]?.name || customerName;
   }
   if (recipient) {
-    const lines: ReceiptLine[] = items.map((i) => ({
-      brand: i.brand,
-      barcode: i.barcode || i.id,
-      rental_price: Number(i.rental_price),
-      waiver: DAMAGE_WAIVER,
+    const lines: ReceiptLine[] = plan.map((p) => ({
+      brand: p.item.brand,
+      barcode: p.item.barcode || p.item.id,
+      rental_price: p.charge,
+      waiver: p.waiver ? DAMAGE_WAIVER : 0,
     }));
     const result = await sendReceipt({
       to: recipient,
@@ -181,7 +249,17 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json(
-    { transaction: tx, email_sent: emailSent },
+    {
+      transaction: tx,
+      email_sent: emailSent,
+      ambassador_applied: !!ambassador,
+      blackout: !!amb && blackout,
+      breakdown: plan.map((p) => ({
+        barcode: p.item.barcode || p.item.id,
+        kind: p.kind,
+        charge: p.charge,
+      })),
+    },
     { status: 201 }
   );
 }
