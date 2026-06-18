@@ -124,8 +124,7 @@ function receiptHtml(d: ReceiptData): string {
           <td style="padding:8px 0;text-align:right;font-weight:bold;border-top:2px solid #1a1a1a;">${money(d.total)}</td></tr>
     </table>
     <p style="font-family:Helvetica,Arial,sans-serif;font-size:14px;">
-      Rental period: <strong>${d.startDate}</strong> &rarr; <strong>${d.dueDate}</strong><br/>
-      Order #${d.transactionId}
+      Rental period: <strong>${d.startDate}</strong> &rarr; <strong>${d.dueDate}</strong>
     </p>
     <h3 style="margin:24px 0 8px;">Rental Agreement</h3>
     <ul style="font-family:Helvetica,Arial,sans-serif;font-size:13px;color:#444;padding-left:18px;">${terms}</ul>
@@ -153,7 +152,7 @@ export async function sendReceipt(
     const { error } = await resend.emails.send({
       from,
       to: d.to,
-      subject: `Your BORROW rental receipt — order #${d.transactionId}`,
+      subject: `Your BORROW rental receipt`,
       html: receiptHtml(d),
     });
     if (error)
