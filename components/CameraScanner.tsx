@@ -2,6 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { BrowserMultiFormatReader, IScannerControls } from "@zxing/browser";
+import { DecodeHintType, BarcodeFormat } from "@zxing/library";
+
+// Our labels are Code 128. Pinning the decoder to it makes 1D scanning on the
+// iPad camera noticeably faster and more reliable than trying every format.
+const SCAN_HINTS = new Map([
+  [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128]],
+]);
 
 /**
  * Rear-camera barcode scanner modal. Streams the iPad camera into a <video>
@@ -27,7 +34,7 @@ export default function CameraScanner({
 
   useEffect(() => {
     let cancelled = false;
-    const reader = new BrowserMultiFormatReader();
+    const reader = new BrowserMultiFormatReader(SCAN_HINTS);
 
     (async () => {
       try {
