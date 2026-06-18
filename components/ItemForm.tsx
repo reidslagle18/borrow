@@ -74,6 +74,7 @@ export default function ItemForm({
   const [fabric, setFabric] = useState(item?.fabric ?? "");
   const [fitNotes, setFitNotes] = useState(item?.fit_notes ?? "");
   const [silhouette, setSilhouette] = useState(item?.silhouette ?? "");
+  const [newWithTags, setNewWithTags] = useState(item?.new_with_tags ?? false);
   const [tier, setTier] = useState<Tier>(item?.tier ?? "standard");
   const [rentalPrice, setRentalPrice] = useState<string>(
     item ? String(item.rental_price) : "35"
@@ -236,6 +237,7 @@ export default function ItemForm({
       fabric: fabric.trim(),
       fit_notes: fitNotes.trim(),
       silhouette: silhouette || null,
+      new_with_tags: newWithTags,
       tier,
       rental_price: Number(rentalPrice),
       purchase_cost: purchaseCost === "" ? null : Number(purchaseCost),
@@ -503,6 +505,36 @@ export default function ItemForm({
                 />
               </div>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setNewWithTags((v) => !v)}
+              className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left transition-colors ${
+                newWithTags
+                  ? "border-sage-deep bg-sage/30"
+                  : "border-ink/15 bg-white"
+              }`}
+            >
+              <span>
+                <span className="block text-[15px] font-medium">
+                  New with tags
+                </span>
+                <span className="block text-[12px] text-ink/50">
+                  Brand new — original retail tags still attached.
+                </span>
+              </span>
+              <span
+                className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                  newWithTags ? "bg-sage-deep" : "bg-ink/20"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${
+                    newWithTags ? "left-[22px]" : "left-0.5"
+                  }`}
+                />
+              </span>
+            </button>
 
             <div>
               <label className={labelCls}>Tier</label>

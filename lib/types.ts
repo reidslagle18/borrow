@@ -25,6 +25,7 @@ export interface Item {
   fabric: string | null;
   fit_notes: string | null;
   silhouette: string | null;
+  new_with_tags: boolean; // brand new, original retail tags still attached
   tier: Tier;
   rental_price: number;
   purchase_cost: number | null; // acquisition cost

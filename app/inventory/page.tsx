@@ -303,6 +303,11 @@ export default function InventoryPage() {
                       Consign
                     </span>
                   )}
+                  {item.new_with_tags && (
+                    <span className="absolute bottom-2.5 left-2.5 rounded-full bg-sage-deep px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-cream">
+                      NWT
+                    </span>
+                  )}
                 </div>
                 <div className="px-1 pt-2.5">
                   <div className="flex items-baseline justify-between gap-2">

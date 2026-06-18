@@ -30,13 +30,13 @@ export async function POST(request: Request) {
     const rows = await sql`
       INSERT INTO items (
         id, barcode, brand, description, size, color, fabric, fit_notes,
-        silhouette, tier, rental_price, purchase_cost, retail_value,
+        silhouette, new_with_tags, tier, rental_price, purchase_cost, retail_value,
         acquisition_date, source, condition_notes, ownership, consignor_id,
         event_types, status, location, photo_url, photos
       ) VALUES (
         ${id}, ${String(b.barcode).trim()}, ${b.brand}, ${b.description || null},
         ${b.size}, ${b.color || null}, ${b.fabric || null}, ${b.fit_notes || null},
-        ${b.silhouette || null}, ${b.tier}, ${b.rental_price},
+        ${b.silhouette || null}, ${!!b.new_with_tags}, ${b.tier}, ${b.rental_price},
         ${b.purchase_cost ?? null}, ${b.retail_value ?? null},
         ${b.acquisition_date || null}, ${b.source || null},
         ${b.condition_notes || null}, ${b.ownership || "owned"},

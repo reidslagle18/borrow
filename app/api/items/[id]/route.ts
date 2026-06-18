@@ -100,6 +100,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
         fabric = ${b.fabric || null},
         fit_notes = ${b.fit_notes || null},
         silhouette = ${b.silhouette || null},
+        new_with_tags = ${!!b.new_with_tags},
         tier = ${b.tier},
         rental_price = ${b.rental_price},
         purchase_cost = ${b.purchase_cost ?? null},

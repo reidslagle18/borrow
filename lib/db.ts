@@ -41,6 +41,7 @@ async function createSchema(): Promise<void> {
       fabric TEXT,
       fit_notes TEXT,
       silhouette TEXT,
+      new_with_tags BOOLEAN NOT NULL DEFAULT false,
       tier TEXT NOT NULL CHECK (tier IN ('standard','mid','high','premium')),
       rental_price NUMERIC(8,2) NOT NULL,
       purchase_cost NUMERIC(8,2),
@@ -79,6 +80,7 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS cleaning_count INT NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS retired_at DATE`;
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS photos TEXT[] NOT NULL DEFAULT '{}'`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS new_with_tags BOOLEAN NOT NULL DEFAULT false`;
 
   // Allow the new tier ('high') and ownership ('ambassador') values by
   // relaxing the original CHECK constraints (Postgres default names).

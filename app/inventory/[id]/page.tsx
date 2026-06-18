@@ -204,6 +204,16 @@ export default function PieceDetailPage() {
 
                 <Section title="Details">
                   <Field label="Silhouette" value={item.silhouette} />
+                  <Field
+                    label="Condition"
+                    value={
+                      item.new_with_tags ? (
+                        <span className="rounded-full bg-sage/60 px-2.5 py-0.5 text-[12px]">
+                          New with tags
+                        </span>
+                      ) : null
+                    }
+                  />
                   <Field label="Size" value={item.size} />
                   <Field label="Color(s)" value={item.color} />
                   <Field label="Fabric" value={item.fabric} />
