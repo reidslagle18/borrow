@@ -31,7 +31,7 @@ export async function POST(request: Request) {
 
   const rentals = await sql`
     SELECT r.id, r.start_date, r.due_date, r.returned_date, r.status,
-           r.rental_price, r.damage_waiver, r.late_fee,
+           r.rental_price, r.damage_waiver, r.cleaning_fee, r.late_fee,
            i.brand, i.size, i.color, i.photo_url
     FROM rentals r
     JOIN items i ON i.id = r.item_id
