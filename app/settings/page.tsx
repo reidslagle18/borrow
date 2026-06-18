@@ -135,6 +135,31 @@ export default function SettingsPage() {
               </p>
             </section>
 
+            {/* Posting target */}
+            <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
+              <h2 className="font-serif text-xl italic text-ink/70">Posting target</h2>
+              <p className="mt-1 text-[13px] text-ink/50">
+                Posts expected per ambassador each month. Pace-based: an ambassador is
+                flagged &quot;Behind&quot; when they fall below the expected pace for how far
+                into the month it is.
+              </p>
+              <div className="mt-3 max-w-[10rem]">
+                <label className={labelCls}>Posts / month</label>
+                <input
+                  type="number"
+                  min={0}
+                  className={inputCls}
+                  value={program.posting_target}
+                  onChange={(e) =>
+                    setProgram((p) => ({
+                      ...p,
+                      posting_target: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                    }))
+                  }
+                />
+              </div>
+            </section>
+
             {/* Blackout dates */}
             <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
               <h2 className="font-serif text-xl italic text-ink/70">

@@ -23,7 +23,27 @@ export async function getProgram(): Promise<AmbassadorProgram> {
     },
     cleaning_rate: v.cleaning_rate ?? DEFAULT_PROGRAM.cleaning_rate,
     blackout_dates: Array.isArray(v.blackout_dates) ? v.blackout_dates : [],
+    posting_target: v.posting_target ?? DEFAULT_PROGRAM.posting_target,
   };
+}
+
+/**
+ * Pace-based posting status. Behind if this month's posts are under the count
+ * we'd expect by this point in the month — lenient early, strict near the end.
+ * On Track once they're pacing toward the target or have already met it.
+ */
+export function postingStatus(
+  count: number,
+  target: number,
+  now: Date = new Date()
+): { onTrack: boolean; expected: number } {
+  const day = now.getUTCDate();
+  const daysInMonth = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)
+  ).getUTCDate();
+  const expected = Math.floor((target * day) / daysInMonth);
+  const onTrack = count >= target || count >= expected;
+  return { onTrack, expected };
 }
 
 type CreditRow = {

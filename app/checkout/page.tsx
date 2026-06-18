@@ -48,6 +48,7 @@ export default function CheckoutPage() {
   const [dueDate, setDueDate] = useState(addDays(todayISO(), RENTAL_DAYS));
   const [dueTouched, setDueTouched] = useState(false);
   const [receiptEmail, setReceiptEmail] = useState("");
+  const [referralCode, setReferralCode] = useState("");
   const [accepted, setAccepted] = useState(false);
   const [agreementName, setAgreementName] = useState("");
 
@@ -59,6 +60,7 @@ export default function CheckoutPage() {
     emailSent: boolean;
     ambassadorApplied: boolean;
     blackout: boolean;
+    referredBy: string | null;
   } | null>(null);
 
   useEffect(() => {
@@ -212,6 +214,7 @@ export default function CheckoutPage() {
         agreement_accepted: accepted,
         agreement_name: agreementName.trim(),
         receipt_email: receiptEmail.trim() || null,
+        referral_code: referralCode.trim() || null,
       }),
     });
     if (res.ok) {
@@ -221,6 +224,7 @@ export default function CheckoutPage() {
         emailSent: data.email_sent,
         ambassadorApplied: !!data.ambassador_applied,
         blackout: !!data.blackout,
+        referredBy: data.referred_by ?? null,
       });
     } else {
       const data = await res.json().catch(() => ({}));
@@ -234,6 +238,7 @@ export default function CheckoutPage() {
     setCustomerId("");
     setCustomerQuery("");
     setReceiptEmail("");
+    setReferralCode("");
     setAccepted(false);
     setAgreementName("");
     setStartDate(todayISO());
@@ -268,6 +273,11 @@ export default function CheckoutPage() {
           {done.blackout && (
             <p className="mt-1 text-sm text-blush-deep">
               Blackout date — full price charged (ambassador perks suppressed).
+            </p>
+          )}
+          {done.referredBy && (
+            <p className="mt-1 text-sm text-ink/50">
+              Referral credited to {done.referredBy}.
             </p>
           )}
           <div className="mt-8 flex justify-center gap-3">
@@ -545,16 +555,27 @@ export default function CheckoutPage() {
           </div>
         </section>
 
-        {/* Receipt email */}
-        <section className="mt-7">
-          <label className={labelCls}>Receipt email</label>
-          <input
-            type="email"
-            className={inputCls}
-            placeholder="customer@email.com"
-            value={receiptEmail}
-            onChange={(e) => setReceiptEmail(e.target.value)}
-          />
+        {/* Receipt email + referral code */}
+        <section className="mt-7 grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className={labelCls}>Receipt email</label>
+            <input
+              type="email"
+              className={inputCls}
+              placeholder="customer@email.com"
+              value={receiptEmail}
+              onChange={(e) => setReceiptEmail(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Referral code (optional)</label>
+            <input
+              className={`${inputCls} font-mono uppercase`}
+              placeholder="Ambassador code"
+              value={referralCode}
+              onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+            />
+          </div>
         </section>
 
         {/* Totals */}

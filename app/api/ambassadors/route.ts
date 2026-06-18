@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
+import { getProgram, postingStatus } from "@/lib/credits";
 
 /** 8-char uppercase referral code, e.g. "K3F9QZ2A". */
 function genReferralCode(): string {
@@ -12,18 +13,29 @@ function genReferralCode(): string {
 
 export async function GET() {
   await ensureSchema();
+  const program = await getProgram();
   const rows = await sql`
     SELECT a.*,
       c.name AS customer_name,
       cons.name AS consignor_name,
       (SELECT COUNT(*)::int FROM items i WHERE i.ambassador_id = a.id) AS sourced_count,
-      (SELECT COUNT(*)::int FROM ambassador_proposals p WHERE p.ambassador_id = a.id) AS proposal_count
+      (SELECT COUNT(*)::int FROM ambassador_proposals p WHERE p.ambassador_id = a.id) AS proposal_count,
+      (SELECT COUNT(*)::int FROM ambassador_referrals r WHERE r.ambassador_id = a.id) AS referral_count,
+      (SELECT COUNT(*)::int FROM ambassador_posts ap
+        WHERE ap.ambassador_id = a.id
+          AND date_trunc('month', ap.posted_on) = date_trunc('month', CURRENT_DATE)
+      ) AS post_count
     FROM ambassadors a
     LEFT JOIN customers c ON c.id = a.customer_id
     LEFT JOIN consignors cons ON cons.id = a.consignor_id
     ORDER BY a.status ASC, a.name ASC
   `;
-  return NextResponse.json(rows);
+  const enriched = rows.map((r) => ({
+    ...r,
+    posting_target: program.posting_target,
+    posting_on_track: postingStatus(r.post_count, program.posting_target).onTrack,
+  }));
+  return NextResponse.json(enriched);
 }
 
 /** Auto-create or reuse a customer record so the ambassador can also rent. */

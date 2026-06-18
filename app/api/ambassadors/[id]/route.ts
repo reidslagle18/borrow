@@ -4,6 +4,7 @@ import {
   getProgram,
   ensureCurrentPeriod,
   remainingCredits,
+  postingStatus,
 } from "@/lib/credits";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -38,11 +39,35 @@ export async function GET(_req: Request, ctx: Ctx) {
     WHERE ambassador_id = ${id}
     ORDER BY id ASC
   `;
+  // Posts this calendar month (count + the list for display).
+  const posts = await sql`
+    SELECT * FROM ambassador_posts
+    WHERE ambassador_id = ${id}
+      AND date_trunc('month', posted_on) = date_trunc('month', CURRENT_DATE)
+    ORDER BY posted_on DESC, id DESC
+  `;
+  const postCount = posts.length;
+  const { onTrack } = postingStatus(postCount, program.posting_target);
+
+  const referrals = await sql`
+    SELECT r.*, c.name AS customer_name
+    FROM ambassador_referrals r
+    LEFT JOIN customers c ON c.id = r.customer_id
+    WHERE r.ambassador_id = ${id}
+    ORDER BY r.created_at DESC, r.id DESC
+  `;
+
   return NextResponse.json({
     ...rows[0],
     credits,
     sourced_items: sourced,
     proposals,
+    posts,
+    post_count: postCount,
+    posting_target: program.posting_target,
+    posting_on_track: onTrack,
+    referrals,
+    referral_count: referrals.length,
   });
 }
 

@@ -220,6 +220,29 @@ async function createSchema(): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+
+  // Ambassador posting log (counted per month against a target) and referral
+  // attributions (a referral code entered at checkout links the rental +
+  // customer to the ambassador whose code it is).
+  await sql`
+    CREATE TABLE IF NOT EXISTS ambassador_posts (
+      id SERIAL PRIMARY KEY,
+      ambassador_id INT NOT NULL REFERENCES ambassadors(id) ON DELETE CASCADE,
+      posted_on DATE NOT NULL DEFAULT CURRENT_DATE,
+      link TEXT,
+      note TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS ambassador_referrals (
+      id SERIAL PRIMARY KEY,
+      ambassador_id INT NOT NULL REFERENCES ambassadors(id) ON DELETE CASCADE,
+      customer_id INT REFERENCES customers(id),
+      transaction_id INT REFERENCES transactions(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */

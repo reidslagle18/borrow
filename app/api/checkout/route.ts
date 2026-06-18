@@ -19,6 +19,7 @@ interface CheckoutBody {
   receipt_email?: string;
   payment_method?: string;
   payment_ref?: string;
+  referral_code?: string;
 }
 
 /**
@@ -192,6 +193,23 @@ export async function POST(request: Request) {
     `;
   }
 
+  // Referral attribution: if a referral code was entered, link this rental +
+  // customer to the ambassador whose code it is (tracking only, no auto-perk).
+  let referredBy: string | null = null;
+  const refCode = (b.referral_code || "").trim().toUpperCase();
+  if (refCode) {
+    const refAmb = await sql`
+      SELECT id, name FROM ambassadors WHERE upper(referral_code) = ${refCode} LIMIT 1
+    `;
+    if (refAmb.length > 0) {
+      await sql`
+        INSERT INTO ambassador_referrals (ambassador_id, customer_id, transaction_id)
+        VALUES (${refAmb[0].id}, ${b.customer_id ?? null}, ${tx.id})
+      `;
+      referredBy = refAmb[0].name;
+    }
+  }
+
   // Notify consignors whose pieces just rented (best-effort, free email).
   const consigned = await sql`
     SELECT i.brand, i.rental_price, c.name, c.email, c.portal_code
@@ -254,6 +272,7 @@ export async function POST(request: Request) {
       email_sent: emailSent,
       ambassador_applied: !!ambassador,
       blackout: !!amb && blackout,
+      referred_by: referredBy,
       breakdown: plan.map((p) => ({
         barcode: p.item.barcode || p.item.id,
         kind: p.kind,

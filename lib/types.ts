@@ -148,6 +148,7 @@ export interface AmbassadorProgram {
   };
   cleaning_rate: number; // the "$6" ambassador rate
   blackout_dates: string[]; // YYYY-MM-DD; perks suppressed on these days
+  posting_target: number; // posts expected per ambassador per month
 }
 
 export const DEFAULT_PROGRAM: AmbassadorProgram = {
@@ -157,7 +158,26 @@ export const DEFAULT_PROGRAM: AmbassadorProgram = {
   },
   cleaning_rate: 6,
   blackout_dates: [],
+  posting_target: 3,
 };
+
+export interface AmbassadorPost {
+  id: number;
+  ambassador_id: number;
+  posted_on: string; // YYYY-MM-DD
+  link: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+export interface AmbassadorReferral {
+  id: number;
+  ambassador_id: number;
+  customer_id: number | null;
+  transaction_id: number | null;
+  customer_name?: string | null;
+  created_at: string;
+}
 
 /** A piece a Curator proposed, and whether BORROW accepted it. */
 export interface AmbassadorProposal {

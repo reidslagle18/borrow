@@ -8,12 +8,14 @@ import {
   AmbassadorTier,
   AmbassadorStatus,
   AmbassadorCredits,
+  AmbassadorPost,
+  AmbassadorReferral,
   AMBASSADOR_TIERS,
   AMBASSADOR_STATUSES,
   MONTHS,
   ambassadorTierLabel,
 } from "@/lib/types";
-import { fmtShort } from "@/lib/dates";
+import { fmtShort, todayISO } from "@/lib/dates";
 
 const inputCls =
   "w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-[15px] outline-none focus:border-ink/40";
@@ -24,6 +26,10 @@ type Row = Ambassador & {
   consignor_name: string | null;
   sourced_count: number;
   proposal_count: number;
+  referral_count: number;
+  post_count: number;
+  posting_target: number;
+  posting_on_track: boolean;
 };
 type SourcedItem = {
   id: string;
@@ -41,6 +47,12 @@ type Detail = Ambassador & {
   credits: AmbassadorCredits;
   sourced_items: SourcedItem[];
   proposals: AmbassadorProposal[];
+  posts: AmbassadorPost[];
+  post_count: number;
+  posting_target: number;
+  posting_on_track: boolean;
+  referrals: AmbassadorReferral[];
+  referral_count: number;
 };
 
 function TierBadge({ tier }: { tier: AmbassadorTier }) {
@@ -276,6 +288,11 @@ function DetailModal({ id, onClose, onChanged }: { id: number; onClose: () => vo
   // proposal entry
   const [newProposal, setNewProposal] = useState("");
 
+  // post entry
+  const [postDate, setPostDate] = useState(todayISO());
+  const [postLink, setPostLink] = useState("");
+  const [postNote, setPostNote] = useState("");
+
   async function load() {
     const res = await fetch(`/api/ambassadors/${id}`);
     if (res.ok) {
@@ -365,6 +382,30 @@ function DetailModal({ id, onClose, onChanged }: { id: number; onClose: () => vo
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ proposal_id: p.id }),
+    });
+    await load();
+  }
+
+  async function addPost() {
+    await fetch(`/api/ambassadors/${id}/posts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        posted_on: postDate || null,
+        link: postLink.trim(),
+        note: postNote.trim(),
+      }),
+    });
+    setPostLink("");
+    setPostNote("");
+    setPostDate(todayISO());
+    await load();
+  }
+  async function removePost(p: AmbassadorPost) {
+    await fetch(`/api/ambassadors/${id}/posts`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ post_id: p.id }),
     });
     await load();
   }
@@ -459,6 +500,64 @@ function DetailModal({ id, onClose, onChanged }: { id: number; onClose: () => vo
             <p className="mt-1.5 text-[12px] text-ink/45">
               Resets on the 1st. Applied automatically at checkout (free → bonus → $6 → full).
             </p>
+
+            {/* Posting */}
+            <div className="mt-6 flex items-center justify-between">
+              <h3 className="text-xl font-medium">
+                Posting · {detail.post_count} of {detail.posting_target} this month
+              </h3>
+              <span
+                className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
+                  detail.posting_on_track ? "bg-sage" : "bg-blush"
+                }`}
+              >
+                {detail.posting_on_track ? "On track" : "Behind"}
+              </span>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <input type="date" className="rounded-xl border border-ink/15 bg-white px-3 py-2 text-sm" value={postDate} onChange={(e) => setPostDate(e.target.value)} />
+              <input className={`${inputCls} min-w-40 flex-1`} placeholder="Link (optional)" value={postLink} onChange={(e) => setPostLink(e.target.value)} />
+              <input className={`${inputCls} min-w-40 flex-1`} placeholder="Note (optional)" value={postNote} onChange={(e) => setPostNote(e.target.value)} />
+              <button onClick={addPost} className="shrink-0 rounded-xl bg-ink px-4 text-[15px] text-cream">Log post</button>
+            </div>
+            <div className="mt-2 space-y-1.5">
+              {detail.posts.length === 0 ? (
+                <p className="rounded-2xl bg-white p-4 text-sm text-ink/45">No posts logged this month.</p>
+              ) : (
+                detail.posts.map((p) => (
+                  <div key={p.id} className="flex items-center gap-3 rounded-2xl bg-white p-3">
+                    <span className="shrink-0 text-[13px] text-ink/55">{fmtShort(p.posted_on.slice(0, 10))}</span>
+                    <span className="min-w-0 flex-1 truncate text-[15px]">
+                      {p.link ? (
+                        <a href={p.link} target="_blank" rel="noreferrer" className="text-lavender-deep underline underline-offset-2">{p.link}</a>
+                      ) : (
+                        <span className="text-ink/70">{p.note || "Post"}</span>
+                      )}
+                      {p.link && p.note && <span className="text-ink/45"> · {p.note}</span>}
+                    </span>
+                    <button onClick={() => removePost(p)} className="shrink-0 rounded-full px-2 text-lg leading-none text-ink/30 hover:bg-ink/5" aria-label="Remove">×</button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Referrals */}
+            <h3 className="mt-6 text-xl font-medium">Referrals ({detail.referral_count})</h3>
+            <p className="mt-1 text-[13px] text-ink/45">
+              Customers who used code <span className="font-mono">{detail.referral_code}</span> at checkout. (Tracking only — rewards handled manually.)
+            </p>
+            <div className="mt-2 space-y-1.5">
+              {detail.referrals.length === 0 ? (
+                <p className="rounded-2xl bg-white p-4 text-sm text-ink/45">No referrals yet.</p>
+              ) : (
+                detail.referrals.map((r) => (
+                  <div key={r.id} className="flex items-center justify-between rounded-2xl bg-white p-3 text-[15px]">
+                    <span>{r.customer_name ?? "Walk-in customer"}</span>
+                    <span className="text-[13px] text-ink/45">{fmtShort(r.created_at.slice(0, 10))}</span>
+                  </div>
+                ))
+              )}
+            </div>
 
             {/* Curator proposals */}
             {detail.tier === "curator" && (
@@ -569,6 +668,9 @@ export default function AmbassadorsPage() {
   });
 
   const hasFilters = q || fTier || fStatus || fSorority;
+  const behind = (rows ?? []).filter(
+    (r) => r.status === "active" && !r.posting_on_track
+  );
 
   return (
     <AppShell>
@@ -582,6 +684,26 @@ export default function AmbassadorsPage() {
           </div>
           <button onClick={() => setCreating(true)} className="rounded-full bg-ink px-6 py-3 text-[15px] text-cream">+ Add ambassador</button>
         </div>
+
+        {/* Needs attention: active ambassadors behind on posting */}
+        {behind.length > 0 && (
+          <div className="mt-6 rounded-2xl border border-blush-deep/30 bg-blush/20 p-4">
+            <p className="text-sm font-medium">
+              Needs attention · {behind.length} behind on posting
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {behind.map((r) => (
+                <button
+                  key={r.id}
+                  onClick={() => setOpenId(r.id)}
+                  className="rounded-full bg-white px-3 py-1 text-[13px] hover:bg-white/70"
+                >
+                  {r.name} · {r.post_count}/{r.posting_target}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Filters */}
         <div className="mt-6 flex flex-wrap gap-2">
@@ -630,8 +752,12 @@ export default function AmbassadorsPage() {
                   </p>
                 </div>
                 <span className="shrink-0 text-right text-[13px] text-ink/55">
-                  {r.sourced_count} sourced
-                  {r.tier === "curator" && <><br />{r.proposal_count} proposed</>}
+                  {r.post_count}/{r.posting_target} posts
+                  {r.status === "active" && !r.posting_on_track && (
+                    <span className="text-blush-deep"> · behind</span>
+                  )}
+                  <br />
+                  {r.referral_count} referral{r.referral_count === 1 ? "" : "s"}
                 </span>
               </button>
             ))
