@@ -1,5 +1,7 @@
 import { sql } from "@/lib/db";
 import { getProgram } from "@/lib/credits";
+import { sendBookingConfirmation } from "@/lib/email";
+import { fmtShort } from "@/lib/dates";
 
 export interface BookingInput {
   item_id: string;
@@ -81,6 +83,22 @@ export async function createBooking(b: BookingInput): Promise<BookingResult> {
     UPDATE items SET status = 'reserved', updated_at = now()
     WHERE id = ${b.item_id} AND status = 'available'
   `;
+
+  // Instant booking confirmation (best-effort email; needs an email on file).
+  if (b.customer_id) {
+    const c = await sql`SELECT name, email FROM customers WHERE id = ${b.customer_id}`;
+    if (c[0]?.email) {
+      const brand = (await sql`SELECT brand FROM items WHERE id = ${b.item_id}`)[0]?.brand ?? "your piece";
+      await sendBookingConfirmation({
+        to: c[0].email,
+        customerName: c[0].name ?? "",
+        brand,
+        startDate: fmtShort(b.start_date),
+        dueDate: fmtShort(b.due_date),
+        total: Number(b.rental_price) + fee,
+      });
+    }
+  }
 
   return { ok: true, rental: rows[0] };
 }

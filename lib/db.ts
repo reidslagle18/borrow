@@ -174,6 +174,9 @@ async function createSchema(): Promise<void> {
   // is retained as "fee charged?"). Stored so finances reflect the real amount
   // rather than a hardcoded multiplier; legacy rows fall back to $5 in queries.
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS cleaning_fee NUMERIC(8,2) NOT NULL DEFAULT 0`;
+  // Dedupe flags for the daily reminder job (so each reminder sends once).
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS pickup_reminded BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS due_reminded BOOLEAN NOT NULL DEFAULT false`;
 
   // Ambassadors: Curators (propose pieces) and Posters (rotate monthly). Each
   // links to their own customer record (they rent) and optionally a consignor

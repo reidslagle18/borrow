@@ -17,7 +17,8 @@ export async function proxy(request: NextRequest) {
   if (
     pathname === "/login" ||
     pathname === "/api/login" ||
-    pathname.startsWith("/api/public/") // customer-site endpoints carry their own auth
+    pathname.startsWith("/api/public/") || // customer-site endpoints carry their own auth
+    pathname.startsWith("/api/cron/") // Vercel Cron; guarded by CRON_SECRET
   ) {
     return NextResponse.next();
   }

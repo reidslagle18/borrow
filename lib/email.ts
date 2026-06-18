@@ -167,3 +167,99 @@ export async function sendReceipt(
     return { sent: false, error: (err as Error).message };
   }
 }
+
+// --- Booking & rental lifecycle notifications (email, best-effort) ---------
+
+const BRAND_WRAP = (inner: string) => `
+  <div style="font-family:Georgia,serif;max-width:520px;margin:0 auto;color:#1a1a1a;">
+    <h1 style="font-style:italic;font-size:32px;margin:0 0 4px;">BORROW</h1>
+    ${inner}
+    <p style="font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#999;margin-top:24px;">
+      Questions? Just reply to this email.
+    </p>
+  </div>`;
+
+async function sendEmail(
+  to: string,
+  subject: string,
+  html: string
+): Promise<{ sent: boolean; error?: string }> {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return { sent: false, error: "email-not-configured" };
+  if (!to) return { sent: false, error: "no-recipient" };
+  try {
+    const resend = new Resend(key);
+    const from = process.env.RESEND_FROM || "BORROW <onboarding@resend.dev>";
+    const { error } = await resend.emails.send({ from, to, subject, html });
+    if (error)
+      return {
+        sent: false,
+        error: typeof error === "object" ? JSON.stringify(error) : String(error),
+      };
+    return { sent: true };
+  } catch (err) {
+    return { sent: false, error: (err as Error).message };
+  }
+}
+
+export interface BookingEmailData {
+  to: string;
+  customerName: string;
+  brand: string;
+  startDate: string; // friendly string
+  dueDate: string;
+  total: number;
+}
+
+/** Instant confirmation when a reservation is made. */
+export async function sendBookingConfirmation(d: BookingEmailData) {
+  const first = d.customerName.split(" ")[0] || "there";
+  return sendEmail(
+    d.to,
+    `You're booked — ${d.brand}`,
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Reservation confirmed</p>
+      <p style="font-size:16px;">Hi ${first}, your <strong>${d.brand}</strong> is reserved.</p>
+      <p style="font-family:Helvetica,Arial,sans-serif;font-size:15px;">
+        Rental window: <strong>${d.startDate} – ${d.dueDate}</strong><br/>
+        Total at pickup: <strong>${money(d.total)}</strong> (includes the Cleaning &amp; Care Fee)
+      </p>
+      <p style="font-family:Helvetica,Arial,sans-serif;font-size:15px;">We'll email you a reminder before pickup. See you soon!</p>
+    `)
+  );
+}
+
+export interface ReminderEmailData {
+  to: string;
+  customerName: string;
+  brand: string;
+  date: string; // friendly start or due date
+}
+
+/** Reminder the day before pickup. */
+export async function sendPickupReminder(d: ReminderEmailData) {
+  const first = d.customerName.split(" ")[0] || "there";
+  return sendEmail(
+    d.to,
+    `Pickup reminder — ${d.brand}`,
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Pickup reminder</p>
+      <p style="font-size:16px;">Hi ${first}, your <strong>${d.brand}</strong> is ready for pickup on <strong>${d.date}</strong>.</p>
+      <p style="font-family:Helvetica,Arial,sans-serif;font-size:15px;">Reply to this email to arrange a time.</p>
+    `)
+  );
+}
+
+/** Reminder near the return due date. */
+export async function sendDueReminder(d: ReminderEmailData) {
+  const first = d.customerName.split(" ")[0] || "there";
+  return sendEmail(
+    d.to,
+    `Return reminder — ${d.brand} is due ${d.date}`,
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Return reminder</p>
+      <p style="font-size:16px;">Hi ${first}, a friendly reminder that your <strong>${d.brand}</strong> is due back on <strong>${d.date}</strong>.</p>
+      <p style="font-family:Helvetica,Arial,sans-serif;font-size:15px;">Late returns are charged $15 per day, so please get it back on time.</p>
+    `)
+  );
+}
