@@ -77,7 +77,7 @@ export default function ItemForm({
   const [newWithTags, setNewWithTags] = useState(item?.new_with_tags ?? false);
   const [tier, setTier] = useState<Tier>(item?.tier ?? "standard");
   const [rentalPrice, setRentalPrice] = useState<string>(
-    item ? String(item.rental_price) : "35"
+    item ? String(item.rental_price) : String(TIERS[0].price)
   );
   const [purchaseCost, setPurchaseCost] = useState<string>(
     item?.purchase_cost != null ? String(item.purchase_cost) : ""
@@ -575,7 +575,7 @@ export default function ItemForm({
                         : "border-ink/15 bg-white text-ink/70"
                     }`}
                   >
-                    {t.label} ${t.price}
+                    {t.label} ${t.price.toFixed(2)}
                   </button>
                 ))}
               </div>
