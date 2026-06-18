@@ -122,6 +122,8 @@ export default function ItemForm({
   const [ncName, setNcName] = useState("");
   const [ncPhone, setNcPhone] = useState("");
   const [ncEmail, setNcEmail] = useState("");
+  const [ncVenmo, setNcVenmo] = useState("");
+  const [ncBackup, setNcBackup] = useState("");
   const [ncError, setNcError] = useState("");
   const [initialClean, setInitialClean] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -225,6 +227,8 @@ export default function ItemForm({
         name: ncName.trim(),
         phone: ncPhone.trim(),
         email: ncEmail.trim(),
+        venmo: ncVenmo.trim(),
+        payout_backup: ncBackup.trim(),
       }),
     });
     if (res.ok) {
@@ -235,6 +239,8 @@ export default function ItemForm({
       setNcName("");
       setNcPhone("");
       setNcEmail("");
+      setNcVenmo("");
+      setNcBackup("");
     } else {
       setNcError("Couldn't add consignor — try again.");
     }
@@ -780,6 +786,18 @@ export default function ItemForm({
                       placeholder="Phone (for portal login)"
                       value={ncPhone}
                       onChange={(e) => setNcPhone(e.target.value)}
+                    />
+                    <input
+                      className={inputCls}
+                      placeholder="Venmo (for payouts) — @handle"
+                      value={ncVenmo}
+                      onChange={(e) => setNcVenmo(e.target.value)}
+                    />
+                    <input
+                      className={inputCls}
+                      placeholder="Backup payout if no Venmo (Zelle, PayPal…)"
+                      value={ncBackup}
+                      onChange={(e) => setNcBackup(e.target.value)}
                     />
                     <p className="text-[12px] text-ink/45">
                       Consignors log into the portal with their email + phone, so

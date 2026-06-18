@@ -13,6 +13,8 @@ export interface Consignor {
   email: string | null;
   phone: string | null;
   notes: string | null;
+  venmo: string | null;
+  payout_backup: string | null;
 }
 
 export interface Item {

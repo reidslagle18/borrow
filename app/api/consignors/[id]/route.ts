@@ -64,7 +64,9 @@ export async function PATCH(request: Request, ctx: Ctx) {
       name = ${b.name.trim()},
       email = ${b.email || null},
       phone = ${b.phone || null},
-      notes = ${b.notes || null}
+      notes = ${b.notes || null},
+      venmo = ${b.venmo || null},
+      payout_backup = ${b.payout_backup || null}
     WHERE id = ${id}
     RETURNING *
   `;

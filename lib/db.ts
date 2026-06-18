@@ -29,6 +29,9 @@ async function createSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+  // Consignor payout details (how BORROW sends them their money).
+  await sql`ALTER TABLE consignors ADD COLUMN IF NOT EXISTS venmo TEXT`;
+  await sql`ALTER TABLE consignors ADD COLUMN IF NOT EXISTS payout_backup TEXT`;
   await sql`CREATE SEQUENCE IF NOT EXISTS item_id_seq START 1`;
   await sql`
     CREATE TABLE IF NOT EXISTS items (

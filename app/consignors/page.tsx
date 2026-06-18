@@ -57,6 +57,8 @@ function ConsignorForm({
   const [name, setName] = useState(consignor?.name ?? "");
   const [phone, setPhone] = useState(consignor?.phone ?? "");
   const [email, setEmail] = useState(consignor?.email ?? "");
+  const [venmo, setVenmo] = useState(consignor?.venmo ?? "");
+  const [payoutBackup, setPayoutBackup] = useState(consignor?.payout_backup ?? "");
   const [notes, setNotes] = useState(consignor?.notes ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -76,6 +78,8 @@ function ConsignorForm({
           name: name.trim(),
           phone: phone.trim(),
           email: email.trim(),
+          venmo: venmo.trim(),
+          payout_backup: payoutBackup.trim(),
           notes: notes.trim(),
         }),
       }
@@ -114,8 +118,16 @@ function ConsignorForm({
             <input className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div>
+            <label className={labelCls}>Venmo (for payouts)</label>
+            <input className={inputCls} value={venmo} onChange={(e) => setVenmo(e.target.value)} placeholder="@their-venmo" />
+          </div>
+          <div>
+            <label className={labelCls}>Backup payout (if no Venmo)</label>
+            <input className={inputCls} value={payoutBackup} onChange={(e) => setPayoutBackup(e.target.value)} placeholder="Zelle, PayPal, Cash App, check…" />
+          </div>
+          <div>
             <label className={labelCls}>Notes</label>
-            <input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Venmo handle, drop-off habits…" />
+            <input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Drop-off habits, anything useful…" />
           </div>
         </div>
         {error && <p className="mt-3 text-sm text-blush-deep">{error}</p>}
@@ -279,6 +291,18 @@ function DetailModal({
             {/* Record payout */}
             <div className="mt-4 rounded-2xl bg-lavender/25 p-4">
               <p className={labelCls}>Record payout</p>
+              {(detail.venmo || detail.payout_backup) && (
+                <p className="mb-2 text-[13px] text-ink/60">
+                  Pay to:{" "}
+                  {detail.venmo && (
+                    <span className="font-medium">Venmo {detail.venmo}</span>
+                  )}
+                  {detail.venmo && detail.payout_backup && " · "}
+                  {detail.payout_backup && (
+                    <span>{detail.venmo ? "backup: " : ""}{detail.payout_backup}</span>
+                  )}
+                </p>
+              )}
               <div className="flex flex-wrap gap-2">
                 <input
                   type="number"

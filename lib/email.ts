@@ -263,3 +263,24 @@ export async function sendDueReminder(d: ReminderEmailData) {
     `)
   );
 }
+
+export interface PayoutNoticeData {
+  to: string;
+  consignorName: string;
+  amount: number;
+  method: string | null;
+}
+
+/** Notifies a consignor that BORROW has sent them a payout. */
+export async function sendPayoutNotice(d: PayoutNoticeData) {
+  const first = d.consignorName.split(" ")[0] || "there";
+  return sendEmail(
+    d.to,
+    `You've been paid ${money(d.amount)} by BORROW`,
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Payout sent</p>
+      <p style="font-size:16px;">Hi ${first}, BORROW just sent you <strong>${money(d.amount)}</strong>${d.method ? ` via ${d.method}` : ""}.</p>
+      <p style="font-family:Helvetica,Arial,sans-serif;font-size:15px;">You can see your full earnings and payout history anytime in your consignor portal.</p>
+    `)
+  );
+}

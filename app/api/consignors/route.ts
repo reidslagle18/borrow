@@ -31,8 +31,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }
   const rows = await sql`
-    INSERT INTO consignors (name, email, phone, notes, portal_code)
+    INSERT INTO consignors (name, email, phone, notes, venmo, payout_backup, portal_code)
     VALUES (${b.name.trim()}, ${b.email || null}, ${b.phone || null}, ${b.notes || null},
+            ${b.venmo || null}, ${b.payout_backup || null},
             upper(substr(md5(random()::text), 1, 8)))
     RETURNING *
   `;
