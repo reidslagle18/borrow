@@ -11,7 +11,7 @@ export async function GET() {
   const rows = await sql`
     SELECT
       i.id, i.brand, i.size, i.color, i.tier, i.rental_price,
-      i.event_types, i.photo_url, i.status,
+      i.event_types, i.photo_url, i.photos, i.status,
       COALESCE(
         json_agg(
           json_build_object('start_date', r.start_date, 'due_date', r.due_date)
