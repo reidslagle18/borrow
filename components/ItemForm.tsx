@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
 import CameraScanner from "./CameraScanner";
+import PhotoCropper from "./PhotoCropper";
 import { beep } from "@/lib/scanSound";
 import {
   Item,
@@ -19,7 +20,7 @@ import {
 } from "@/lib/types";
 
 /** Downscale a photo client-side so iPad camera shots upload fast. */
-async function resizeImage(file: File, maxDim = 1600): Promise<Blob> {
+async function resizeImage(file: Blob, maxDim = 1600): Promise<Blob> {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -115,6 +116,7 @@ export default function ItemForm({
     item?.photos?.length ? item.photos : item?.photo_url ? [item.photo_url] : []
   );
   const [uploading, setUploading] = useState(false);
+  const [cropQueue, setCropQueue] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState("");
@@ -184,19 +186,22 @@ export default function ItemForm({
     }
   }
 
-  async function handlePhotos(files: FileList) {
+  // Newly-selected files wait here so each can be cropped before upload.
+  function handlePhotos(files: FileList) {
+    setCropQueue(Array.from(files));
+  }
+
+  async function uploadBlob(blob: Blob) {
     setUploading(true);
     setError("");
     try {
-      for (const file of Array.from(files)) {
-        const resized = await resizeImage(file);
-        const blob = await upload(
-          `items/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, "_")}`,
-          resized,
-          { access: "public", handleUploadUrl: "/api/upload", contentType: "image/jpeg" }
-        );
-        setPhotos((prev) => [...prev, blob.url]);
-      }
+      const resized = await resizeImage(blob);
+      const up = await upload(
+        `items/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`,
+        resized,
+        { access: "public", handleUploadUrl: "/api/upload", contentType: "image/jpeg" }
+      );
+      setPhotos((prev) => [...prev, up.url]);
     } catch {
       setError("Photo upload failed — try again.");
     } finally {
@@ -952,6 +957,23 @@ export default function ItemForm({
           barcodeRef.current?.focus();
         }}
         onClose={() => setScanOpen(false)}
+      />
+    )}
+    {cropQueue.length > 0 && (
+      <PhotoCropper
+        key={`${cropQueue[0].name}-${cropQueue[0].size}-${cropQueue.length}`}
+        file={cropQueue[0]}
+        remaining={cropQueue.length}
+        busy={uploading}
+        onCropped={async (blob) => {
+          await uploadBlob(blob);
+          setCropQueue((q) => q.slice(1));
+        }}
+        onUseFull={async (file) => {
+          await uploadBlob(file);
+          setCropQueue((q) => q.slice(1));
+        }}
+        onCancel={() => setCropQueue([])}
       />
     )}
     </>
