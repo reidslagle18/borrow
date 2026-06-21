@@ -146,6 +146,8 @@ export async function PATCH(request: Request, ctx: Ctx) {
 
   const photos: string[] = Array.isArray(b.photos) ? b.photos : [];
   const cover = b.photo_url || photos[0] || null;
+  // Whole-dollar rental price, rounded up — no stray cents.
+  const rentalPrice = Math.ceil(Number(b.rental_price));
   // Stamp the retirement date when a piece is first moved to retired.
   const retiredAt = b.status === "retired" ? b.retired_at ?? null : null;
 
@@ -164,7 +166,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
         new_with_tags = ${!!b.new_with_tags},
         ambassador_id = ${b.ambassador_id ?? null},
         tier = ${b.tier},
-        rental_price = ${b.rental_price},
+        rental_price = ${rentalPrice},
         purchase_cost = ${b.purchase_cost ?? null},
         retail_value = ${b.retail_value ?? null},
         acquisition_date = ${b.acquisition_date || null},

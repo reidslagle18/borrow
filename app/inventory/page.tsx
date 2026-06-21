@@ -180,7 +180,7 @@ export default function InventoryPage() {
             <option value="">Tier</option>
             {TIERS.map((t) => (
               <option key={t.value} value={t.value}>
-                {t.label} ${t.price.toFixed(2)}
+                {t.label} ${t.price}
               </option>
             ))}
           </select>

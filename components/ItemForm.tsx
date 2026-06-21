@@ -618,7 +618,7 @@ export default function ItemForm({
                         : "border-ink/15 bg-white text-ink/70"
                     }`}
                   >
-                    {t.label} ${t.price.toFixed(2)}
+                    {t.label} ${t.price}
                   </button>
                 ))}
               </div>

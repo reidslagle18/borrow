@@ -272,13 +272,13 @@ export interface Rental {
   photo_url?: string | null;
 }
 
-// Tier prices include the 3.99% credit-card processing markup baked in
-// (base $35/$45/$65/$85 × 1.0399, rounded to the cent).
+// Tier prices include the 3.99% card-processing markup, rounded UP to a whole
+// dollar (base $35/$45/$65/$85 × 1.0399, then ceil) — no stray cents.
 export const TIERS: { value: Tier; label: string; price: number }[] = [
-  { value: "standard", label: "Standard", price: 36.4 },
-  { value: "mid", label: "Mid", price: 46.8 },
-  { value: "high", label: "High", price: 67.59 },
-  { value: "premium", label: "Premium", price: 88.39 },
+  { value: "standard", label: "Standard", price: 37 },
+  { value: "mid", label: "Mid", price: 47 },
+  { value: "high", label: "High", price: 68 },
+  { value: "premium", label: "Premium", price: 89 },
 ];
 
 export const OWNERSHIPS: { value: Ownership; label: string }[] = [

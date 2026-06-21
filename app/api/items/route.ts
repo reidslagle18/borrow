@@ -28,6 +28,8 @@ export async function POST(request: Request) {
   const id = await nextItemId();
   const photos: string[] = Array.isArray(b.photos) ? b.photos : [];
   const cover = b.photo_url || photos[0] || null;
+  // Always store the rental price as a whole dollar, rounded up — no stray cents.
+  const rentalPrice = Math.ceil(Number(b.rental_price));
   try {
     const rows = await sql`
       INSERT INTO items (
@@ -39,7 +41,7 @@ export async function POST(request: Request) {
         ${id}, ${String(b.barcode).trim()}, ${b.brand}, ${b.description || null},
         ${b.size}, ${b.color || null}, ${b.fabric || null}, ${b.fit_notes || null},
         ${b.silhouette || null}, ${!!b.new_with_tags}, ${b.ambassador_id ?? null},
-        ${b.tier}, ${b.rental_price},
+        ${b.tier}, ${rentalPrice},
         ${b.purchase_cost ?? null}, ${b.retail_value ?? null},
         ${b.acquisition_date || null}, ${b.source || null},
         ${b.condition_notes || null}, ${b.ownership || "owned"},
