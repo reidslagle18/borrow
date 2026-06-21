@@ -146,8 +146,12 @@ export async function PATCH(request: Request, ctx: Ctx) {
 
   const photos: string[] = Array.isArray(b.photos) ? b.photos : [];
   const cover = b.photo_url || photos[0] || null;
-  // Whole-dollar rental price, rounded up — no stray cents.
+  // Whole-dollar prices, rounded up — no stray cents.
   const rentalPrice = Math.ceil(Number(b.rental_price));
+  const ceilOrNull = (v: unknown) =>
+    v == null || v === "" ? null : Math.ceil(Number(v));
+  const purchaseCost = ceilOrNull(b.purchase_cost);
+  const retailValue = ceilOrNull(b.retail_value);
   // Stamp the retirement date when a piece is first moved to retired.
   const retiredAt = b.status === "retired" ? b.retired_at ?? null : null;
 
@@ -167,8 +171,8 @@ export async function PATCH(request: Request, ctx: Ctx) {
         ambassador_id = ${b.ambassador_id ?? null},
         tier = ${b.tier},
         rental_price = ${rentalPrice},
-        purchase_cost = ${b.purchase_cost ?? null},
-        retail_value = ${b.retail_value ?? null},
+        purchase_cost = ${purchaseCost},
+        retail_value = ${retailValue},
         acquisition_date = ${b.acquisition_date || null},
         source = ${b.source || null},
         condition_notes = ${b.condition_notes || null},

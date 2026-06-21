@@ -28,8 +28,12 @@ export async function POST(request: Request) {
   const id = await nextItemId();
   const photos: string[] = Array.isArray(b.photos) ? b.photos : [];
   const cover = b.photo_url || photos[0] || null;
-  // Always store the rental price as a whole dollar, rounded up — no stray cents.
+  // Store all prices as whole dollars, rounded up — no stray cents.
   const rentalPrice = Math.ceil(Number(b.rental_price));
+  const ceilOrNull = (v: unknown) =>
+    v == null || v === "" ? null : Math.ceil(Number(v));
+  const purchaseCost = ceilOrNull(b.purchase_cost);
+  const retailValue = ceilOrNull(b.retail_value);
   try {
     const rows = await sql`
       INSERT INTO items (
@@ -42,7 +46,7 @@ export async function POST(request: Request) {
         ${b.size}, ${b.color || null}, ${b.fabric || null}, ${b.fit_notes || null},
         ${b.silhouette || null}, ${!!b.new_with_tags}, ${b.ambassador_id ?? null},
         ${b.tier}, ${rentalPrice},
-        ${b.purchase_cost ?? null}, ${b.retail_value ?? null},
+        ${purchaseCost}, ${retailValue},
         ${b.acquisition_date || null}, ${b.source || null},
         ${b.condition_notes || null}, ${b.ownership || "owned"},
         ${b.ownership === "consignment" ? b.consignor_id ?? null : null},
