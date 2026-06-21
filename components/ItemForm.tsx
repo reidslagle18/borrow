@@ -17,6 +17,7 @@ import {
   STATUSES,
   OWNERSHIPS,
   SILHOUETTES,
+  COLORS,
 } from "@/lib/types";
 
 /** Downscale a photo client-side so iPad camera shots upload fast. */
@@ -71,7 +72,11 @@ export default function ItemForm({
   const [brand, setBrand] = useState(item?.brand ?? "");
   const [description, setDescription] = useState(item?.description ?? "");
   const [size, setSize] = useState(item?.size ?? "");
-  const [color, setColor] = useState(item?.color ?? "");
+  const [colors, setColors] = useState<string[]>(
+    item?.color
+      ? item.color.split(",").map((c) => c.trim()).filter(Boolean)
+      : []
+  );
   const [fabric, setFabric] = useState(item?.fabric ?? "");
   const [fitNotes, setFitNotes] = useState(item?.fit_notes ?? "");
   const [silhouette, setSilhouette] = useState(item?.silhouette ?? "");
@@ -267,7 +272,7 @@ export default function ItemForm({
       brand: brand.trim(),
       description: description.trim(),
       size,
-      color: color.trim(),
+      color: colors.join(", "),
       fabric: fabric.trim(),
       fit_notes: fitNotes.trim(),
       silhouette: silhouette || null,
@@ -487,12 +492,39 @@ export default function ItemForm({
               </div>
               <div>
                 <label className={labelCls}>Color(s)</label>
-                <input
+                <select
                   className={inputCls}
-                  value={color}
-                  onChange={(e) => setColor(e.target.value)}
-                  placeholder="Dusty pink"
-                />
+                  value=""
+                  onChange={(e) => {
+                    const c = e.target.value;
+                    if (c && !colors.includes(c)) {
+                      setColors((prev) => [...prev, c]);
+                    }
+                  }}
+                >
+                  <option value="">Add a color…</option>
+                  {COLORS.filter((c) => !colors.includes(c)).map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+                {colors.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {colors.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() =>
+                          setColors((prev) => prev.filter((x) => x !== c))
+                        }
+                        className="flex items-center gap-1 rounded-full bg-lavender/50 px-2.5 py-1 text-[12px]"
+                      >
+                        {c} <span className="text-ink/40">×</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div>
                 <label className={labelCls}>Silhouette</label>

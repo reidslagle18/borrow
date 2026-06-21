@@ -324,6 +324,30 @@ export const EVENT_TYPES = [
   "Night Out",
 ];
 
+export const COLORS = [
+  "Black",
+  "White",
+  "Ivory / Cream",
+  "Beige / Tan",
+  "Brown",
+  "Red",
+  "Pink",
+  "Blush",
+  "Orange",
+  "Yellow",
+  "Gold",
+  "Green",
+  "Sage",
+  "Blue",
+  "Navy",
+  "Purple",
+  "Lavender",
+  "Silver / Grey",
+  "Metallic",
+  "Floral / Print",
+  "Multicolor",
+];
+
 export const SILHOUETTES = [
   "Mini Dress",
   "Midi Dress",
