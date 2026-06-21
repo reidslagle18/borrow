@@ -55,7 +55,7 @@ export async function POST(request: Request) {
   const c = consignors[0];
 
   const items = await sql`
-    SELECT i.id, i.brand, i.size, i.color, i.tier, i.rental_price,
+    SELECT i.id, COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.size, i.color, i.tier, i.rental_price,
            i.photo_url, i.status, i.rental_count,
       (SELECT COALESCE(SUM(r.rental_price), 0) FROM rentals r
         WHERE r.item_id = i.id AND r.status = 'completed') AS revenue,

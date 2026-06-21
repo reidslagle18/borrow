@@ -402,13 +402,13 @@ function DetailModal({
                         <img src={i.photo_url} alt="" className="h-full w-full object-cover" />
                       ) : (
                         <div className="flex h-full items-center justify-center font-serif italic text-ink/30">
-                          {i.brand.charAt(0)}
+                          {(i.name || i.brand).charAt(0)}
                         </div>
                       )}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[15px]">
-                        <span className="font-serif font-semibold">{i.brand}</span>{" "}
+                        <span className="font-serif font-semibold">{i.name || i.brand}</span>{" "}
                         <span className="text-ink/50">{i.id} · {i.size}</span>
                       </p>
                       <p className="truncate text-[13px] text-ink/55">

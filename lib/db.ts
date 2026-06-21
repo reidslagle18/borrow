@@ -37,6 +37,7 @@ async function createSchema(): Promise<void> {
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
       barcode TEXT,
+      name TEXT,
       brand TEXT NOT NULL,
       description TEXT,
       size TEXT NOT NULL,
@@ -72,6 +73,7 @@ async function createSchema(): Promise<void> {
   // leaves existing rows untouched. Keeps the BRW-xxxx `id` as the PK so
   // existing rentals.item_id foreign keys stay intact.
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS barcode TEXT`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS name TEXT`;
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS description TEXT`;
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS fabric TEXT`;
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS fit_notes TEXT`;

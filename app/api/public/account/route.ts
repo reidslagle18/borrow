@@ -32,7 +32,7 @@ export async function POST(request: Request) {
   const rentals = await sql`
     SELECT r.id, r.start_date, r.due_date, r.returned_date, r.status,
            r.rental_price, r.damage_waiver, r.cleaning_fee, r.late_fee,
-           i.brand, i.size, i.color, i.photo_url
+           COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.size, i.color, i.photo_url
     FROM rentals r
     JOIN items i ON i.id = r.item_id
     WHERE r.customer_id = ${me.id} AND r.status != 'cancelled'
@@ -51,7 +51,7 @@ export async function POST(request: Request) {
   if (consignors.length > 0) {
     const cid = consignors[0].id;
     const items = await sql`
-      SELECT i.id, i.brand, i.size, i.color, i.rental_price, i.photo_url,
+      SELECT i.id, COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.size, i.color, i.rental_price, i.photo_url,
              i.status, i.rental_count,
         (SELECT COALESCE(SUM(r.rental_price), 0) FROM rentals r
           WHERE r.item_id = i.id AND r.status = 'completed') AS revenue,

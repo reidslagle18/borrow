@@ -23,7 +23,7 @@ export async function GET(request: Request) {
 
   // Pickups happening tomorrow that haven't been reminded yet.
   const pickups = await sql`
-    SELECT r.id, r.start_date, c.name AS customer_name, c.email, i.brand
+    SELECT r.id, r.start_date, c.name AS customer_name, c.email, COALESCE(NULLIF(i.name, ''), i.brand) AS brand
     FROM rentals r
     JOIN items i ON i.id = r.item_id
     LEFT JOIN customers c ON c.id = r.customer_id
@@ -46,7 +46,7 @@ export async function GET(request: Request) {
 
   // Active rentals due back tomorrow that haven't been reminded yet.
   const dues = await sql`
-    SELECT r.id, r.due_date, c.name AS customer_name, c.email, i.brand
+    SELECT r.id, r.due_date, c.name AS customer_name, c.email, COALESCE(NULLIF(i.name, ''), i.brand) AS brand
     FROM rentals r
     JOIN items i ON i.id = r.item_id
     LEFT JOIN customers c ON c.id = r.customer_id

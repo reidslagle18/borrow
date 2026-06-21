@@ -381,7 +381,7 @@ export default function CheckoutPage() {
               )
               .map((i) => (
                 <option key={i.id} value={i.id}>
-                  {i.brand} · {i.barcode || i.id} · {i.size} · {money(Number(i.rental_price))}
+                  {i.name || i.brand} · {i.barcode || i.id} · {i.size} · {money(Number(i.rental_price))}
                 </option>
               ))}
           </select>
@@ -405,7 +405,7 @@ export default function CheckoutPage() {
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[15px] font-medium">{i.brand}</p>
+                    <p className="truncate text-[15px] font-medium">{i.name || i.brand}</p>
                     <p className="text-[13px] text-ink/50">
                       <span className="font-mono">{i.barcode || i.id}</span> ·{" "}
                       {tierLabel(i.tier)} · {money(Number(i.rental_price))} +{" "}

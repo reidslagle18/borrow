@@ -42,7 +42,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
     `;
     // Notify the consignor (free email, best-effort) when their piece goes out.
     const consigned = await sql`
-      SELECT i.brand, i.rental_price, c.name, c.email, c.portal_code
+      SELECT COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.rental_price, c.name, c.email, c.portal_code
       FROM items i JOIN consignors c ON c.id = i.consignor_id
       WHERE i.id = ${rental.item_id} AND i.ownership = 'consignment'
         AND c.email IS NOT NULL
@@ -166,7 +166,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
   }
 
   const rows = await sql`
-    SELECT r.*, c.name AS customer_name, i.brand, i.size, i.color, i.photo_url
+    SELECT r.*, c.name AS customer_name, COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.size, i.color, i.photo_url
     FROM rentals r
     LEFT JOIN customers c ON c.id = r.customer_id
     JOIN items i ON i.id = r.item_id

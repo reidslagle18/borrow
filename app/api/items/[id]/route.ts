@@ -160,6 +160,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
     rows = await sql`
       UPDATE items SET
         barcode = ${String(b.barcode).trim()},
+        name = ${b.name || null},
         brand = ${b.brand},
         description = ${b.description || null},
         size = ${b.size},

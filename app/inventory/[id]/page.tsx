@@ -130,7 +130,7 @@ export default function PieceDetailPage() {
               <div>
                 <div className="flex items-center gap-3">
                   <h1 className="font-serif text-4xl font-medium md:text-5xl">
-                    {item.brand}
+                    {item.name || item.brand}
                   </h1>
                   <span
                     className={`rounded-full px-3 py-1 text-xs font-medium ${STATUS_STYLES[item.status]}`}
@@ -204,6 +204,7 @@ export default function PieceDetailPage() {
                 )}
 
                 <Section title="Details">
+                  <Field label="Brand" value={item.brand} />
                   <Field label="Silhouette" value={item.silhouette} />
                   <Field
                     label="Condition"

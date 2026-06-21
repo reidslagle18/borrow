@@ -95,7 +95,9 @@ export async function createBooking(b: BookingInput): Promise<BookingResult> {
   if (b.customer_id) {
     const c = await sql`SELECT name, email FROM customers WHERE id = ${b.customer_id}`;
     if (c[0]?.email) {
-      const brand = (await sql`SELECT brand FROM items WHERE id = ${b.item_id}`)[0]?.brand ?? "your piece";
+      const brand =
+        (await sql`SELECT COALESCE(NULLIF(name, ''), brand) AS brand FROM items WHERE id = ${b.item_id}`)[0]
+          ?.brand ?? "your piece";
       await sendBookingConfirmation({
         to: c[0].email,
         customerName: c[0].name ?? "",

@@ -82,7 +82,7 @@ export async function GET(request: Request) {
   ]);
 
   const pieces = await sql`
-    SELECT i.id, i.brand, i.size, i.tier, i.ownership, i.status,
+    SELECT i.id, COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.size, i.tier, i.ownership, i.status,
            i.photo_url, i.purchase_cost, i.rental_count,
            COALESCE(SUM(r.rental_price) FILTER (WHERE r.status IN ('active','completed')), 0) AS revenue
     FROM items i

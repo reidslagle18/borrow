@@ -56,7 +56,7 @@ export async function POST(request: Request) {
 
   // Load the pieces and verify each can be rented.
   const items = await sql`
-    SELECT id, brand, barcode, rental_price, status, ownership, consignor_id
+    SELECT id, COALESCE(NULLIF(name, ''), brand) AS brand, barcode, rental_price, status, ownership, consignor_id
     FROM items WHERE id = ANY(${itemIds})
   `;
   if (items.length !== itemIds.length) {
@@ -244,7 +244,7 @@ export async function POST(request: Request) {
 
   // Notify consignors whose pieces just rented (best-effort, free email).
   const consigned = await sql`
-    SELECT i.brand, i.rental_price, c.name, c.email, c.portal_code
+    SELECT COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.rental_price, c.name, c.email, c.portal_code
     FROM items i JOIN consignors c ON c.id = i.consignor_id
     WHERE i.id = ANY(${itemIds}) AND i.ownership = 'consignment' AND c.email IS NOT NULL
   `;

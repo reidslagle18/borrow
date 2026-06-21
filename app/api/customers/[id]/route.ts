@@ -12,7 +12,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const rentals = await sql`
-    SELECT r.*, i.brand, i.size, i.color, i.photo_url
+    SELECT r.*, COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.size, i.color, i.photo_url
     FROM rentals r
     JOIN items i ON i.id = r.item_id
     WHERE r.customer_id = ${id}

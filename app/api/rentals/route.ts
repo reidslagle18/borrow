@@ -10,7 +10,7 @@ export async function GET(request: Request) {
 
   if (searchParams.get("recent") === "1") {
     const rows = await sql`
-      SELECT r.*, c.name AS customer_name, i.brand, i.size, i.color, i.photo_url
+      SELECT r.*, c.name AS customer_name, COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.size, i.color, i.photo_url
       FROM rentals r
       LEFT JOIN customers c ON c.id = r.customer_id
       JOIN items i ON i.id = r.item_id
@@ -25,7 +25,7 @@ export async function GET(request: Request) {
   const rows =
     from && to
       ? await sql`
-          SELECT r.*, c.name AS customer_name, i.brand, i.size, i.color, i.photo_url
+          SELECT r.*, c.name AS customer_name, COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.size, i.color, i.photo_url
           FROM rentals r
           LEFT JOIN customers c ON c.id = r.customer_id
           JOIN items i ON i.id = r.item_id
@@ -34,7 +34,7 @@ export async function GET(request: Request) {
           ORDER BY r.start_date ASC
         `
       : await sql`
-          SELECT r.*, c.name AS customer_name, i.brand, i.size, i.color, i.photo_url
+          SELECT r.*, c.name AS customer_name, COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.size, i.color, i.photo_url
           FROM rentals r
           LEFT JOIN customers c ON c.id = r.customer_id
           JOIN items i ON i.id = r.item_id

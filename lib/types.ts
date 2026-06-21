@@ -21,6 +21,7 @@ export interface Consignor {
 export interface Item {
   id: string;
   barcode: string;
+  name: string | null; // custom display name; used as the heading everywhere
   brand: string;
   description: string | null;
   size: string;

@@ -69,6 +69,7 @@ export default function ItemForm({
 }) {
   const editing = !!item;
   const [barcode, setBarcode] = useState(item?.barcode ?? "");
+  const [name, setName] = useState(item?.name ?? "");
   const [brand, setBrand] = useState(item?.brand ?? "");
   const [description, setDescription] = useState(item?.description ?? "");
   const [size, setSize] = useState(item?.size ?? "");
@@ -269,6 +270,7 @@ export default function ItemForm({
     setError("");
     const payload = {
       barcode: barcode.trim(),
+      name: name.trim(),
       brand: brand.trim(),
       description: description.trim(),
       size,
@@ -463,6 +465,16 @@ export default function ItemForm({
                   Camera
                 </button>
               </div>
+            </div>
+
+            <div>
+              <label className={labelCls}>Name</label>
+              <input
+                className={inputCls}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="The heading shown everywhere — e.g. The Cowl Slip"
+              />
             </div>
 
             <div className="grid grid-cols-2 gap-3">

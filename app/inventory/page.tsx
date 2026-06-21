@@ -82,6 +82,7 @@ export default function InventoryPage() {
       list = list.filter(
         (i) =>
           i.brand.toLowerCase().includes(t) ||
+          (i.name ?? "").toLowerCase().includes(t) ||
           i.id.toLowerCase().includes(t) ||
           (i.color ?? "").toLowerCase().includes(t) ||
           (i.consignor_name ?? "").toLowerCase().includes(t)
@@ -313,13 +314,14 @@ export default function InventoryPage() {
                 <div className="px-1 pt-2.5">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="truncate font-serif text-lg font-semibold leading-tight">
-                      {item.brand}
+                      {item.name || item.brand}
                     </span>
                     <span className="shrink-0 text-[15px]">
                       {money(item.rental_price)}
                     </span>
                   </div>
                   <p className="mt-0.5 text-[13px] text-ink/50">
+                    {item.name ? `${item.brand} · ` : ""}
                     <span className="font-mono">{item.barcode || item.id}</span> ·{" "}
                     {item.size}
                     {item.color ? ` · ${item.color}` : ""} ·{" "}

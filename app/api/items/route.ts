@@ -37,12 +37,12 @@ export async function POST(request: Request) {
   try {
     const rows = await sql`
       INSERT INTO items (
-        id, barcode, brand, description, size, color, fabric, fit_notes,
+        id, barcode, name, brand, description, size, color, fabric, fit_notes,
         silhouette, new_with_tags, ambassador_id, tier, rental_price, purchase_cost,
         retail_value, acquisition_date, source, condition_notes, ownership,
         consignor_id, event_types, status, location, photo_url, photos
       ) VALUES (
-        ${id}, ${String(b.barcode).trim()}, ${b.brand}, ${b.description || null},
+        ${id}, ${String(b.barcode).trim()}, ${b.name || null}, ${b.brand}, ${b.description || null},
         ${b.size}, ${b.color || null}, ${b.fabric || null}, ${b.fit_notes || null},
         ${b.silhouette || null}, ${!!b.new_with_tags}, ${b.ambassador_id ?? null},
         ${b.tier}, ${rentalPrice},

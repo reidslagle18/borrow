@@ -30,7 +30,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     WHERE a.id = ${id}
   `;
   const sourced = await sql`
-    SELECT id, brand, barcode, size, color, status, photo_url, rental_count
+    SELECT id, COALESCE(NULLIF(name, ''), brand) AS brand, barcode, size, color, status, photo_url, rental_count
     FROM items WHERE ambassador_id = ${id}
     ORDER BY created_at DESC
   `;
