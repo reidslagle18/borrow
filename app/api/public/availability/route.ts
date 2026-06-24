@@ -10,7 +10,7 @@ export async function GET() {
   await ensureSchema();
   const rows = await sql`
     SELECT
-      i.id, COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.size, i.color, i.silhouette, i.tier, i.rental_price,
+      i.id, COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.size, i.color, i.silhouette, i.tier, i.rental_price, i.retail_value,
       i.event_types, i.photo_url, i.photos, i.status,
       COALESCE(
         json_agg(
