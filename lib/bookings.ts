@@ -1,5 +1,6 @@
 import { sql } from "@/lib/db";
 import { getProgram } from "@/lib/credits";
+import { getStripe } from "@/lib/stripe";
 import { sendBookingConfirmation } from "@/lib/email";
 import { fmtShort } from "@/lib/dates";
 
@@ -12,6 +13,11 @@ export interface BookingInput {
   damage_waiver: boolean;
   notes: string | null;
   source: "studio" | "web";
+  // set when the reservation was paid online via Stripe Checkout
+  paid?: boolean;
+  stripe_customer_id?: string | null;
+  stripe_payment_method_id?: string | null;
+  stripe_session_id?: string | null;
 }
 
 export type BookingResult =
@@ -78,10 +84,13 @@ export async function createBooking(b: BookingInput): Promise<BookingResult> {
   const rows = await sql`
     INSERT INTO rentals (
       item_id, customer_id, start_date, due_date, status,
-      rental_price, damage_waiver, cleaning_fee, notes, source
+      rental_price, damage_waiver, cleaning_fee, notes, source,
+      paid, stripe_customer_id, stripe_payment_method_id, stripe_session_id
     ) VALUES (
       ${b.item_id}, ${b.customer_id}, ${b.start_date}, ${b.due_date},
-      'reserved', ${b.rental_price}, ${b.damage_waiver}, ${fee}, ${b.notes}, ${b.source}
+      'reserved', ${b.rental_price}, ${b.damage_waiver}, ${fee}, ${b.notes}, ${b.source},
+      ${b.paid ?? false}, ${b.stripe_customer_id ?? null},
+      ${b.stripe_payment_method_id ?? null}, ${b.stripe_session_id ?? null}
     )
     RETURNING *
   `;
@@ -137,4 +146,73 @@ export async function findOrCreateCustomer(c: {
     RETURNING id
   `;
   return rows[0].id;
+}
+
+/**
+ * Fulfills a paid Stripe Checkout Session into a reservation. Idempotent (keyed
+ * on the session id) so it's safe to call from both the success page and the
+ * webhook. If the piece was booked by someone else in the meantime, the payment
+ * is refunded rather than leaving the customer charged with no reservation.
+ */
+export async function fulfillReservation(
+  sessionId: string
+): Promise<{ ok: boolean; error?: string; already?: boolean }> {
+  const stripe = getStripe();
+  if (!stripe) return { ok: false, error: "stripe-not-configured" };
+
+  const session = await stripe.checkout.sessions.retrieve(sessionId, {
+    expand: ["payment_intent"],
+  });
+  if (session.payment_status !== "paid") return { ok: false, error: "not-paid" };
+
+  const already = await sql`SELECT id FROM rentals WHERE stripe_session_id = ${sessionId}`;
+  if (already.length > 0) return { ok: true, already: true };
+
+  const m = (session.metadata || {}) as Record<string, string>;
+  const itemId = m.item_id;
+  const customerId = m.customer_id ? Number(m.customer_id) : null;
+  const pi = session.payment_intent;
+  const paymentMethodId =
+    pi && typeof pi === "object" && typeof pi.payment_method === "string"
+      ? pi.payment_method
+      : null;
+  const stripeCustomerId =
+    typeof session.customer === "string"
+      ? session.customer
+      : session.customer?.id ?? null;
+
+  const item = await sql`SELECT rental_price FROM items WHERE id = ${itemId}`;
+  if (item.length === 0) return { ok: false, error: "item-missing" };
+
+  const result = await createBooking({
+    item_id: itemId,
+    customer_id: customerId,
+    start_date: m.start_date,
+    due_date: m.due_date,
+    rental_price: Number(item[0].rental_price),
+    damage_waiver: true,
+    notes: "Reserved + paid online",
+    source: "web",
+    paid: true,
+    stripe_customer_id: stripeCustomerId,
+    stripe_payment_method_id: paymentMethodId,
+    stripe_session_id: sessionId,
+  });
+
+  if (!result.ok) {
+    // Couldn't reserve (e.g. just got booked) — refund so they're not charged.
+    if (pi && typeof pi === "object") {
+      try {
+        await stripe.refunds.create({ payment_intent: pi.id });
+      } catch {
+        /* surface via follow-up if refund fails */
+      }
+    }
+    return { ok: false, error: result.error };
+  }
+
+  if (customerId && stripeCustomerId) {
+    await sql`UPDATE customers SET stripe_customer_id = ${stripeCustomerId} WHERE id = ${customerId} AND stripe_customer_id IS NULL`;
+  }
+  return { ok: true };
 }

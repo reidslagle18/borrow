@@ -323,6 +323,9 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS replacement_charged BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS payment_followup BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS payment_link_url TEXT`;
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS paid BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS stripe_session_id TEXT`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS rentals_stripe_session_key ON rentals(stripe_session_id) WHERE stripe_session_id IS NOT NULL`;
   await sql`
     CREATE TABLE IF NOT EXISTS customer_charges (
       id SERIAL PRIMARY KEY,

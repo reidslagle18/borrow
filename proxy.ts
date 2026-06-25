@@ -18,7 +18,8 @@ export async function proxy(request: NextRequest) {
     pathname === "/login" ||
     pathname === "/api/login" ||
     pathname.startsWith("/api/public/") || // customer-site endpoints carry their own auth
-    pathname.startsWith("/api/cron/") // Vercel Cron; guarded by CRON_SECRET
+    pathname.startsWith("/api/cron/") || // Vercel Cron; guarded by CRON_SECRET
+    pathname === "/api/stripe/webhook" // Stripe webhook; verified by signature
   ) {
     return NextResponse.next();
   }
