@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { loadStripe } from "@stripe/stripe-js";
 import {
@@ -77,8 +77,17 @@ function CheckoutInner() {
 
   const [ambCustomerIds, setAmbCustomerIds] = useState<Set<number>>(new Set());
   const [cleaningFee, setCleaningFee] = useState<number>(CLEANING_FEE_DEFAULT);
+  const [terminalReaderId, setTerminalReaderId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // In-person tap state: shown as an overlay once an order is created and the
+  // reader is collecting payment.
+  const [tap, setTap] = useState<{
+    status: "waiting" | "error";
+    txId: number;
+    piId: string | null;
+    message?: string;
+  } | null>(null);
   const [done, setDone] = useState<{
     id: number;
     emailSent: boolean;
@@ -86,6 +95,7 @@ function CheckoutInner() {
     blackout: boolean;
     referredBy: string | null;
     creditApplied: number;
+    paymentPending: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -103,6 +113,7 @@ function CheckoutInner() {
         if (sr.ok) {
           const s = await sr.json();
           if (s.program?.cleaning_fee != null) setCleaningFee(s.program.cleaning_fee);
+          if (s.program?.terminal_reader_id) setTerminalReaderId(s.program.terminal_reader_id);
         }
         if (ar.ok) {
           const amb = await ar.json();
@@ -121,6 +132,9 @@ function CheckoutInner() {
   }, []);
 
   const isAmbassador = customerId !== "" && ambCustomerIds.has(customerId);
+  // When a Terminal reader is configured, payment is collected by tapping the
+  // reader (no card typing), and we skip the manual card-on-file step.
+  const useTerminal = !!terminalReaderId;
 
   const byId = useMemo(() => {
     const m = new Map<string, Item>();
@@ -218,6 +232,91 @@ function CheckoutInner() {
     if (!agreementName) setAgreementName(c.name);
   }
 
+  // Holds the created order between "check out" and a successful tap, so the
+  // done screen can report ambassador/credit/referral details after payment.
+  const pendingOrder = useRef<{
+    transaction: { id: number };
+    email_sent: boolean;
+    ambassador_applied: boolean;
+    blackout: boolean;
+    referred_by: string | null;
+    credit_applied: number;
+  } | null>(null);
+
+  function finishTerminal(paymentPending: boolean) {
+    const data = pendingOrder.current;
+    if (!data) return;
+    setTap(null);
+    setDone({
+      id: data.transaction.id,
+      emailSent: data.email_sent,
+      ambassadorApplied: !!data.ambassador_applied,
+      blackout: !!data.blackout,
+      referredBy: data.referred_by ?? null,
+      creditApplied: Number(data.credit_applied) || 0,
+      paymentPending,
+    });
+  }
+
+  async function startTap(txId: number) {
+    setTap({ status: "waiting", txId, piId: null });
+    try {
+      const cr = await fetch("/api/stripe/terminal/charge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transaction_id: txId, reader_id: terminalReaderId }),
+      });
+      const cd = await cr.json().catch(() => ({}));
+      if (!cr.ok) {
+        setTap({ status: "error", txId, piId: null, message: cd.error || "Couldn't start the reader." });
+        return;
+      }
+      if (cd.status === "succeeded") return finishTerminal(false); // nothing to charge
+      setTap({ status: "waiting", txId, piId: cd.payment_intent_id });
+      pollTap(cd.payment_intent_id, txId, 0);
+    } catch {
+      setTap({ status: "error", txId, piId: null, message: "Couldn't reach the reader." });
+    }
+  }
+
+  async function pollTap(piId: string, txId: number, attempt: number) {
+    const MAX = 45; // ~90s at 2s intervals
+    try {
+      const pr = await fetch("/api/stripe/terminal/poll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payment_intent_id: piId, transaction_id: txId }),
+      });
+      const pd = await pr.json().catch(() => ({}));
+      if (pd.status === "succeeded") return finishTerminal(false);
+      if (pd.status === "failed")
+        return setTap({ status: "error", txId, piId, message: "Card declined or canceled." });
+      if (attempt >= MAX)
+        return setTap({ status: "error", txId, piId, message: "Timed out waiting for the tap." });
+      setTimeout(() => pollTap(piId, txId, attempt + 1), 2000);
+    } catch {
+      if (attempt >= MAX)
+        return setTap({ status: "error", txId, piId, message: "Lost connection to the reader." });
+      setTimeout(() => pollTap(piId, txId, attempt + 1), 2000);
+    }
+  }
+
+  async function cancelTap() {
+    const t = tap;
+    if (!t) return;
+    await fetch("/api/stripe/terminal/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reader_id: terminalReaderId, payment_intent_id: t.piId }),
+    }).catch(() => {});
+    setTap({
+      status: "error",
+      txId: t.txId,
+      piId: t.piId,
+      message: "Canceled. Tap again, or finish and collect another way.",
+    });
+  }
+
   async function checkout() {
     if (selected.length === 0) {
       setError("Add at least one piece.");
@@ -231,14 +330,48 @@ function CheckoutInner() {
       setError("Enter the name of the person accepting the agreement.");
       return;
     }
-    // When Stripe is on, a customer + saved card are required (the agreement
-    // authorizes off-session late-fee / replacement charges to this card).
-    if (stripeEnabled && customerId === "") {
+    // When card-on-file is in use (Stripe on, no tap reader), a customer + saved
+    // card are required (the agreement authorizes off-session late-fee /
+    // replacement charges to this card).
+    if (stripeEnabled && !useTerminal && customerId === "") {
       setError("Add a customer so their card can be saved on file.");
       return;
     }
     setSubmitting(true);
     setError("");
+
+    // In-person tap: create the order (pending), then collect on the reader.
+    if (useTerminal) {
+      try {
+        const res = await fetch("/api/checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            customer_id: customerId === "" ? null : customerId,
+            item_ids: selectedIds,
+            start_date: startDate,
+            due_date: dueDate,
+            agreement_accepted: accepted,
+            agreement_name: agreementName.trim(),
+            receipt_email: receiptEmail.trim() || null,
+            referral_code: referralCode.trim() || null,
+            payment_mode: "terminal",
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setError(data.error || "Checkout failed — try again.");
+          setSubmitting(false);
+          return;
+        }
+        pendingOrder.current = data;
+        await startTap(data.transaction.id);
+      } catch {
+        setError("Checkout failed — try again.");
+        setSubmitting(false);
+      }
+      return;
+    }
 
     // Save the card via SetupIntent before booking.
     let stripeCustomerId: string | null = null;
@@ -299,6 +432,7 @@ function CheckoutInner() {
         blackout: !!data.blackout,
         referredBy: data.referred_by ?? null,
         creditApplied: Number(data.credit_applied) || 0,
+        paymentPending: false,
       });
     } else {
       const data = await res.json().catch(() => ({}));
@@ -320,6 +454,8 @@ function CheckoutInner() {
     setDueTouched(false);
     setError("");
     setDone(null);
+    setTap(null);
+    pendingOrder.current = null;
     setSubmitting(false);
   }
 
@@ -334,6 +470,12 @@ function CheckoutInner() {
             {selected.length === 1 ? "" : "s"} now marked Rented Out · total{" "}
             {money(total)}.
           </p>
+          {done.paymentPending && (
+            <p className="mt-2 rounded-xl bg-butter/40 px-4 py-2 text-sm text-ink/70">
+              Payment not collected on the reader — order #{done.id} is marked
+              pending. Collect payment another way, then mark it paid.
+            </p>
+          )}
           <p className="mt-1 text-sm text-ink/50">
             {done.emailSent
               ? "Receipt emailed to the customer."
@@ -657,8 +799,8 @@ function CheckoutInner() {
           </div>
         </section>
 
-        {/* Card on file (Stripe) */}
-        {stripeEnabled && (
+        {/* Card on file (Stripe) — only when there's no tap reader */}
+        {stripeEnabled && !useTerminal && (
           <section className="mt-7">
             <label className={labelCls}>Card on file</label>
             <div className="rounded-xl border border-ink/15 bg-white px-3.5 py-3">
@@ -731,13 +873,62 @@ function CheckoutInner() {
         >
           {submitting
             ? "Processing…"
-            : `Collect payment & check out · ${money(total)}`}
+            : useTerminal
+              ? `Charge on reader & check out · ${money(total)}`
+              : `Collect payment & check out · ${money(total)}`}
         </button>
         <p className="mt-2 text-center text-xs text-ink/40">
-          Payment is collected on the card reader; this records the transaction
-          and marks pieces Rented Out.
+          {useTerminal
+            ? "Creates the order, then prompts the customer to tap their card on the reader."
+            : "Payment is collected on the card reader; this records the transaction and marks pieces Rented Out."}
         </p>
       </div>
+
+      {/* In-person tap overlay */}
+      {tap && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 px-5">
+          <div className="w-full max-w-sm rounded-3xl bg-cream p-7 text-center shadow-xl">
+            {tap.status === "waiting" ? (
+              <>
+                <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-2 border-ink/15 border-t-ink" />
+                <h2 className="font-serif text-2xl font-medium">Tap to pay</h2>
+                <p className="mt-2 text-[15px] text-ink/60">
+                  Ask the customer to tap, insert, or swipe their card on the
+                  reader to pay {money(total)}.
+                </p>
+                <button
+                  onClick={cancelTap}
+                  className="mt-6 rounded-full border border-ink/15 px-6 py-2.5 text-[15px] text-ink/60"
+                >
+                  Cancel tap
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="font-serif text-4xl italic text-blush-deep">!</p>
+                <h2 className="mt-2 font-serif text-2xl font-medium">
+                  Payment not collected
+                </h2>
+                <p className="mt-2 text-[15px] text-ink/60">{tap.message}</p>
+                <div className="mt-6 flex flex-col gap-2">
+                  <button
+                    onClick={() => startTap(tap.txId)}
+                    className="rounded-full bg-ink px-6 py-3 text-[15px] text-cream"
+                  >
+                    Tap again
+                  </button>
+                  <button
+                    onClick={() => finishTerminal(true)}
+                    className="rounded-full px-6 py-2 text-[15px] text-ink/50"
+                  >
+                    Finish &amp; collect another way
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {scanOpen && (
         <CameraScanner

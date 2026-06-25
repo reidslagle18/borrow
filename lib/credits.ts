@@ -26,6 +26,7 @@ export async function getProgram(): Promise<AmbassadorProgram> {
     blackout_dates: Array.isArray(v.blackout_dates) ? v.blackout_dates : [],
     posting_target: v.posting_target ?? DEFAULT_PROGRAM.posting_target,
     post_credit: v.post_credit ?? DEFAULT_PROGRAM.post_credit,
+    terminal_reader_id: v.terminal_reader_id ?? DEFAULT_PROGRAM.terminal_reader_id,
   };
 }
 

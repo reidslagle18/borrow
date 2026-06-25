@@ -181,6 +181,7 @@ export interface AmbassadorProgram {
   blackout_dates: string[]; // YYYY-MM-DD; perks suppressed on these days
   posting_target: number; // posts expected per ambassador per month
   post_credit: number; // store credit a customer earns for posting a rental
+  terminal_reader_id: string; // Stripe Terminal reader for in-person tap charges
 }
 
 export const DEFAULT_PROGRAM: AmbassadorProgram = {
@@ -193,6 +194,7 @@ export const DEFAULT_PROGRAM: AmbassadorProgram = {
   blackout_dates: [],
   posting_target: 3,
   post_credit: 5,
+  terminal_reader_id: "",
 };
 
 export interface AmbassadorPost {

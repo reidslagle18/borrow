@@ -14,6 +14,47 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(false);
   const [newDate, setNewDate] = useState("");
+  const [readers, setReaders] = useState<
+    { id: string; label: string | null; device_type: string; status: string }[]
+  >([]);
+  const [readerMsg, setReaderMsg] = useState("");
+  const [readerBusy, setReaderBusy] = useState(false);
+
+  async function loadReaders() {
+    setReaderBusy(true);
+    setReaderMsg("");
+    try {
+      const res = await fetch("/api/stripe/terminal/readers");
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Couldn't list readers");
+      setReaders(d.readers || []);
+      if ((d.readers || []).length === 0)
+        setReaderMsg("No readers registered yet. Register a test reader to try the flow.");
+    } catch (e) {
+      setReaderMsg((e as Error).message);
+    }
+    setReaderBusy(false);
+  }
+
+  async function registerSimulated() {
+    setReaderBusy(true);
+    setReaderMsg("");
+    try {
+      const res = await fetch("/api/stripe/terminal/readers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "register_simulated" }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Couldn't register a test reader");
+      setProgram((p) => ({ ...p, terminal_reader_id: d.reader_id }));
+      setReaderMsg(`Test reader registered: ${d.reader_id}. Save settings to use it.`);
+      loadReaders();
+    } catch (e) {
+      setReaderMsg((e as Error).message);
+    }
+    setReaderBusy(false);
+  }
 
   useEffect(() => {
     (async () => {
@@ -239,6 +280,68 @@ export default function SettingsPage() {
                   ))
                 )}
               </div>
+            </section>
+
+            {/* In-person card reader */}
+            <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
+              <h2 className="font-serif text-xl italic text-ink/70">
+                In-person card reader
+              </h2>
+              <p className="mt-1 text-[13px] text-ink/50">
+                Paste your Stripe Terminal reader ID (starts with{" "}
+                <span className="font-mono">tmr_</span>). When set, checkout collects
+                payment by tapping the reader — no typing cards. Leave blank to keep
+                using the card-on-file field.
+              </p>
+              <input
+                className={`${inputCls} mt-3 font-mono`}
+                placeholder="tmr_…"
+                value={program.terminal_reader_id}
+                onChange={(e) =>
+                  setProgram((p) => ({ ...p, terminal_reader_id: e.target.value.trim() }))
+                }
+              />
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={loadReaders}
+                  disabled={readerBusy}
+                  className="rounded-full border border-ink/15 px-4 py-1.5 text-sm text-ink/70 disabled:opacity-40"
+                >
+                  List my readers
+                </button>
+                <button
+                  type="button"
+                  onClick={registerSimulated}
+                  disabled={readerBusy}
+                  className="rounded-full border border-ink/15 px-4 py-1.5 text-sm text-ink/70 disabled:opacity-40"
+                >
+                  Register a test reader
+                </button>
+              </div>
+              {readers.length > 0 && (
+                <div className="mt-3 space-y-1.5">
+                  {readers.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() =>
+                        setProgram((p) => ({ ...p, terminal_reader_id: r.id }))
+                      }
+                      className="block w-full rounded-xl border border-ink/10 bg-white px-3.5 py-2 text-left text-sm hover:bg-cream"
+                    >
+                      <span className="font-mono">{r.id}</span>
+                      <span className="text-ink/50">
+                        {" "}
+                        · {r.label || r.device_type} · {r.status}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {readerMsg && (
+                <p className="mt-2 text-[13px] text-ink/60">{readerMsg}</p>
+              )}
             </section>
 
             <div className="mt-6 flex items-center gap-3">

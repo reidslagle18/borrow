@@ -45,6 +45,8 @@ export async function PUT(request: Request) {
     blackout_dates: dates,
     posting_target: num(p.posting_target, DEFAULT_PROGRAM.posting_target),
     post_credit: num(p.post_credit, DEFAULT_PROGRAM.post_credit),
+    terminal_reader_id:
+      typeof p.terminal_reader_id === "string" ? p.terminal_reader_id.trim() : "",
   };
 
   await sql`

@@ -22,6 +22,10 @@ interface CheckoutBody {
   referral_code?: string;
   stripe_customer_id?: string;
   stripe_payment_method_id?: string;
+  // "terminal" → payment is collected on the tap reader right after this call,
+  // so the transaction starts as pending and its rentals start unpaid; the
+  // Terminal poll endpoint flips both once the tap succeeds.
+  payment_mode?: "terminal" | "manual";
 }
 
 /**
@@ -171,6 +175,12 @@ export async function POST(request: Request) {
   }
   const total = grossTotal - creditApplied;
 
+  // In-person tap is collected on the reader right after this call; everything
+  // else is treated as already collected (online/manual/card-on-file).
+  const isTerminal = b.payment_mode === "terminal";
+  const paymentStatus = isTerminal ? "pending" : "collected";
+  const paymentMethod = isTerminal ? "terminal" : b.payment_method || "card_reader";
+
   // One transaction row for the whole checkout.
   const txRows = await sql`
     INSERT INTO transactions (
@@ -179,8 +189,8 @@ export async function POST(request: Request) {
       agreement_accepted, agreement_name, agreement_accepted_at, receipt_email
     ) VALUES (
       ${b.customer_id ?? null}, ${items.length}, ${subtotal}, ${waiverTotal}, ${total},
-      ${creditApplied}, ${b.start_date}, ${b.due_date}, ${b.payment_method || "card_reader"},
-      'collected', ${b.payment_ref || null},
+      ${creditApplied}, ${b.start_date}, ${b.due_date}, ${paymentMethod},
+      ${paymentStatus}, ${b.payment_ref || null},
       true, ${b.agreement_name || null}, now(), ${b.receipt_email || null}
     )
     RETURNING *
@@ -203,12 +213,12 @@ export async function POST(request: Request) {
       INSERT INTO rentals (
         item_id, customer_id, start_date, due_date, status,
         rental_price, damage_waiver, cleaning_fee, source, transaction_id,
-        stripe_customer_id, stripe_payment_method_id
+        stripe_customer_id, stripe_payment_method_id, paid
       ) VALUES (
         ${p.item.id}, ${b.customer_id ?? null}, ${b.start_date}, ${b.due_date},
         'active', ${p.charge}, ${p.waiver}, ${p.waiver ? cleaningFee : 0},
         'checkout', ${tx.id},
-        ${b.stripe_customer_id || null}, ${b.stripe_payment_method_id || null}
+        ${b.stripe_customer_id || null}, ${b.stripe_payment_method_id || null}, ${!isTerminal}
       )
       RETURNING id
     `;
