@@ -20,6 +20,8 @@ interface CheckoutBody {
   payment_method?: string;
   payment_ref?: string;
   referral_code?: string;
+  stripe_customer_id?: string;
+  stripe_payment_method_id?: string;
 }
 
 /**
@@ -200,11 +202,13 @@ export async function POST(request: Request) {
     const rentalRows = await sql`
       INSERT INTO rentals (
         item_id, customer_id, start_date, due_date, status,
-        rental_price, damage_waiver, cleaning_fee, source, transaction_id
+        rental_price, damage_waiver, cleaning_fee, source, transaction_id,
+        stripe_customer_id, stripe_payment_method_id
       ) VALUES (
         ${p.item.id}, ${b.customer_id ?? null}, ${b.start_date}, ${b.due_date},
         'active', ${p.charge}, ${p.waiver}, ${p.waiver ? cleaningFee : 0},
-        'checkout', ${tx.id}
+        'checkout', ${tx.id},
+        ${b.stripe_customer_id || null}, ${b.stripe_payment_method_id || null}
       )
       RETURNING id
     `;

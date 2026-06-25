@@ -2,6 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { loadStripe } from "@stripe/stripe-js";
+import {
+  Elements,
+  CardElement,
+  useStripe,
+  useElements,
+} from "@stripe/react-stripe-js";
 import AppShell from "@/components/AppShell";
 import CameraScanner from "@/components/CameraScanner";
 import { beep } from "@/lib/scanSound";
@@ -19,11 +26,27 @@ const inputCls =
   "w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-[15px] outline-none focus:border-ink/40";
 const labelCls = "mb-1.5 block text-xs uppercase tracking-[0.15em] text-ink/50";
 
+// Stripe is optional — if the publishable key isn't set, checkout still works
+// without saving a card.
+const PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+const stripePromise = PUBLISHABLE_KEY ? loadStripe(PUBLISHABLE_KEY) : null;
+
 function money(n: number): string {
   return `$${Number(n) % 1 === 0 ? Number(n) : Number(n).toFixed(2)}`;
 }
 
 export default function CheckoutPage() {
+  return (
+    <Elements stripe={stripePromise}>
+      <CheckoutInner />
+    </Elements>
+  );
+}
+
+function CheckoutInner() {
+  const stripe = useStripe();
+  const elements = useElements();
+  const stripeEnabled = !!stripePromise;
   const [items, setItems] = useState<Item[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loadError, setLoadError] = useState("");
@@ -208,8 +231,49 @@ export default function CheckoutPage() {
       setError("Enter the name of the person accepting the agreement.");
       return;
     }
+    // When Stripe is on, a customer + saved card are required (the agreement
+    // authorizes off-session late-fee / replacement charges to this card).
+    if (stripeEnabled && customerId === "") {
+      setError("Add a customer so their card can be saved on file.");
+      return;
+    }
     setSubmitting(true);
     setError("");
+
+    // Save the card via SetupIntent before booking.
+    let stripeCustomerId: string | null = null;
+    let stripePaymentMethodId: string | null = null;
+    if (stripeEnabled && customerId !== "") {
+      try {
+        const siRes = await fetch("/api/stripe/setup-intent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ customer_id: customerId }),
+        });
+        const si = await siRes.json();
+        if (!siRes.ok) throw new Error(si.error || "Couldn't start card setup");
+        const card = elements?.getElement(CardElement);
+        if (!stripe || !card) throw new Error("Card field not ready — try again.");
+        const result = await stripe.confirmCardSetup(si.clientSecret, {
+          payment_method: { card },
+        });
+        if (result.error) {
+          setError(result.error.message || "Card couldn't be saved.");
+          setSubmitting(false);
+          return;
+        }
+        stripeCustomerId = si.stripeCustomerId;
+        stripePaymentMethodId =
+          typeof result.setupIntent?.payment_method === "string"
+            ? result.setupIntent.payment_method
+            : null;
+      } catch (err) {
+        setError((err as Error).message || "Card setup failed — try again.");
+        setSubmitting(false);
+        return;
+      }
+    }
+
     const res = await fetch("/api/checkout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -222,6 +286,8 @@ export default function CheckoutPage() {
         agreement_name: agreementName.trim(),
         receipt_email: receiptEmail.trim() || null,
         referral_code: referralCode.trim() || null,
+        stripe_customer_id: stripeCustomerId,
+        stripe_payment_method_id: stripePaymentMethodId,
       }),
     });
     if (res.ok) {
@@ -590,6 +656,21 @@ export default function CheckoutPage() {
             />
           </div>
         </section>
+
+        {/* Card on file (Stripe) */}
+        {stripeEnabled && (
+          <section className="mt-7">
+            <label className={labelCls}>Card on file</label>
+            <div className="rounded-xl border border-ink/15 bg-white px-3.5 py-3">
+              <CardElement options={{ hidePostalCode: false }} />
+            </div>
+            <p className="mt-1.5 text-[12px] text-ink/45">
+              Saved securely with Stripe. By accepting the agreement, the customer
+              authorizes BORROW to charge this card for late fees or a
+              non-returned piece.
+            </p>
+          </section>
+        )}
 
         {/* Totals */}
         <section className="mt-7 rounded-2xl bg-white/70 p-5">

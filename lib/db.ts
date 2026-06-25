@@ -312,6 +312,30 @@ async function createSchema(): Promise<void> {
     ON store_credit_entries(rental_id)
     WHERE reason = 'post' AND rental_id IS NOT NULL
   `;
+
+  // Stripe: a saved card per customer (off-session charges) + per-rental
+  // payment method, charge tracking, and follow-up flags for failed charges.
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT`;
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS outstanding_balance NUMERIC(10,2) NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT`;
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS stripe_payment_method_id TEXT`;
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS late_fee_charged NUMERIC(10,2) NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS replacement_charged BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS payment_followup BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS payment_link_url TEXT`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS customer_charges (
+      id SERIAL PRIMARY KEY,
+      customer_id INT REFERENCES customers(id) ON DELETE SET NULL,
+      rental_id INT REFERENCES rentals(id) ON DELETE SET NULL,
+      amount NUMERIC(10,2) NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('late_fee','replacement')),
+      status TEXT NOT NULL CHECK (status IN ('succeeded','failed','pending')),
+      stripe_payment_intent_id TEXT,
+      payment_link_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */
