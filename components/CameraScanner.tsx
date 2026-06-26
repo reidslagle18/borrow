@@ -1,14 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserMultiFormatReader, IScannerControls } from "@zxing/browser";
-import { DecodeHintType, BarcodeFormat } from "@zxing/library";
 
-// Our labels are Code 128. Pinning the decoder to it makes 1D scanning on the
-// iPad camera noticeably faster and more reliable than trying every format.
-const SCAN_HINTS = new Map([
-  [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128]],
-]);
+// Container is aspect-[4/3]; a quarter-turn needs to scale up to keep covering.
+const QUARTER_TURN_SCALE = 4 / 3;
 
 /**
  * Rear-camera barcode scanner modal. Streams the iPad camera into a <video>
@@ -27,14 +23,37 @@ export default function CameraScanner({
   const controlsRef = useRef<IScannerControls | null>(null);
   const onResultRef = useRef(onResult);
   const [error, setError] = useState("");
+  // Quarter-turns applied to the preview so it looks upright. Auto-set from the
+  // device orientation; the rotate button lets staff nudge it if it's off.
+  const [rotation, setRotation] = useState(0);
 
   useEffect(() => {
     onResultRef.current = onResult;
   }, [onResult]);
 
+  // Match the preview to how the iPad is held: if the camera feed and the
+  // viewport disagree on landscape-vs-portrait, turn the preview a quarter turn.
+  const autoOrient = useCallback(() => {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth || !v.videoHeight) return;
+    const feedLandscape = v.videoWidth >= v.videoHeight;
+    const viewportLandscape = window.innerWidth >= window.innerHeight;
+    setRotation(feedLandscape === viewportLandscape ? 0 : 90);
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("resize", autoOrient);
+    window.addEventListener("orientationchange", autoOrient);
+    return () => {
+      window.removeEventListener("resize", autoOrient);
+      window.removeEventListener("orientationchange", autoOrient);
+    };
+  }, [autoOrient]);
+
   useEffect(() => {
     let cancelled = false;
-    const reader = new BrowserMultiFormatReader(SCAN_HINTS);
+    // No format hints → ZXing decodes every barcode type it supports.
+    const reader = new BrowserMultiFormatReader();
 
     (async () => {
       try {
@@ -50,6 +69,12 @@ export default function CameraScanner({
           return;
         }
         controlsRef.current = controls;
+        // Once the feed's real dimensions are known, orient the preview.
+        const v = videoRef.current;
+        if (v) {
+          v.onloadedmetadata = autoOrient;
+          autoOrient();
+        }
       } catch (err) {
         if (cancelled) return;
         const name = (err as { name?: string }).name;
@@ -69,7 +94,7 @@ export default function CameraScanner({
       cancelled = true;
       controlsRef.current?.stop();
     };
-  }, []);
+  }, [autoOrient]);
 
   return (
     <div
@@ -104,7 +129,12 @@ export default function CameraScanner({
           <div className="relative aspect-[4/3] overflow-hidden rounded-2xl bg-ink/90">
             <video
               ref={videoRef}
-              className="h-full w-full object-cover"
+              className="h-full w-full object-cover transition-transform duration-200"
+              style={{
+                transform: `rotate(${rotation}deg)${
+                  rotation % 180 !== 0 ? ` scale(${QUARTER_TURN_SCALE})` : ""
+                }`,
+              }}
               playsInline
               muted
             />
@@ -112,6 +142,14 @@ export default function CameraScanner({
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <div className="h-1/3 w-2/3 rounded-xl border-2 border-cream/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.25)]" />
             </div>
+            {/* Rotate the preview if it comes in sideways */}
+            <button
+              onClick={() => setRotation((r) => (r + 90) % 360)}
+              className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-full bg-ink/70 px-3 py-1.5 text-[13px] text-cream backdrop-blur"
+              aria-label="Rotate camera view"
+            >
+              <span className="text-base leading-none">↻</span> Rotate
+            </button>
           </div>
         )}
 
