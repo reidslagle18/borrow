@@ -1,16 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BrowserMultiFormatReader, IScannerControls } from "@zxing/browser";
+import { BrowserMultiFormatReader } from "@zxing/browser";
+import { DecodeHintType } from "@zxing/library";
 
 // Container is aspect-[4/3]; a quarter-turn needs to scale up to keep covering.
 const QUARTER_TURN_SCALE = 4 / 3;
 
+// TRY_HARDER + no format restriction → ZXing decodes any barcode it supports,
+// scanning a little more thoroughly per frame.
+const HINTS = new Map<DecodeHintType, unknown>([[DecodeHintType.TRY_HARDER, true]]);
+
 /**
  * Rear-camera barcode scanner modal. Streams the iPad camera into a <video>
- * and decodes continuously with ZXing (iPad Safari has no native
- * BarcodeDetector). Calls onResult for each decoded code; the parent decides
- * what to do and may keep the scanner open to retry unknown codes.
+ * and decodes on a timer from a canvas we control.
+ *
+ * The important bit: iPad camera frames often arrive rotated, and ZXing's 1D
+ * reader only scans horizontal lines — so a sideways feed makes a barcode
+ * vertical and unreadable. We draw each frame into a canvas turned upright
+ * (matching the preview), and if that misses we also try a quarter turn, so it
+ * reads no matter how the iPad is held. Calls onResult with the decoded text.
  */
 export default function CameraScanner({
   onResult,
@@ -20,19 +29,24 @@ export default function CameraScanner({
   onClose: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const controlsRef = useRef<IScannerControls | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const onResultRef = useRef(onResult);
   const [error, setError] = useState("");
-  // Quarter-turns applied to the preview so it looks upright. Auto-set from the
-  // device orientation; the rotate button lets staff nudge it if it's off.
+  // Quarter-turns applied to the preview AND to the frame we decode, so what
+  // staff see upright is what ZXing reads. Auto-set from the device
+  // orientation; the Rotate button lets staff nudge it if it's off.
   const [rotation, setRotation] = useState(0);
+  const rotationRef = useRef(0);
 
   useEffect(() => {
     onResultRef.current = onResult;
   }, [onResult]);
+  useEffect(() => {
+    rotationRef.current = rotation;
+  }, [rotation]);
 
   // Match the preview to how the iPad is held: if the camera feed and the
-  // viewport disagree on landscape-vs-portrait, turn the preview a quarter turn.
+  // viewport disagree on landscape-vs-portrait, turn it a quarter turn.
   const autoOrient = useCallback(() => {
     const v = videoRef.current;
     if (!v || !v.videoWidth || !v.videoHeight) return;
@@ -52,29 +66,80 @@ export default function CameraScanner({
 
   useEffect(() => {
     let cancelled = false;
-    // No format hints → ZXing decodes every barcode type it supports.
-    const reader = new BrowserMultiFormatReader();
+    let stream: MediaStream | null = null;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let scanned = false;
+    const reader = new BrowserMultiFormatReader(HINTS);
+    const canvas = document.createElement("canvas");
+    canvasRef.current = canvas;
+
+    // Draw the current video frame into the canvas, turned by `deg` so the
+    // barcode ends up horizontal for the decoder.
+    function drawFrame(deg: number): boolean {
+      const v = videoRef.current;
+      const ctx = canvas.getContext("2d");
+      if (!v || !ctx || !v.videoWidth) return false;
+      const vw = v.videoWidth;
+      const vh = v.videoHeight;
+      const d = ((deg % 360) + 360) % 360;
+      if (d === 90 || d === 270) {
+        canvas.width = vh;
+        canvas.height = vw;
+      } else {
+        canvas.width = vw;
+        canvas.height = vh;
+      }
+      ctx.save();
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate((d * Math.PI) / 180);
+      ctx.drawImage(v, -vw / 2, -vh / 2);
+      ctx.restore();
+      return true;
+    }
+
+    function tick() {
+      if (scanned) return;
+      const base = rotationRef.current;
+      // Try the oriented frame first, then a quarter turn as a fallback so a
+      // horizontal- vs vertical-barcode mismatch still gets read.
+      for (const extra of [0, 90]) {
+        if (!drawFrame(base + extra)) return;
+        try {
+          const result = reader.decodeFromCanvas(canvas);
+          if (result) {
+            scanned = true;
+            onResultRef.current(result.getText());
+            return;
+          }
+        } catch {
+          // Not-found / checksum / format misses are expected mid-scan — the
+          // next tick (or the quarter-turn fallback) tries again.
+        }
+      }
+    }
 
     (async () => {
       try {
-        const controls = await reader.decodeFromConstraints(
-          { video: { facingMode: { ideal: "environment" } } },
-          videoRef.current!,
-          (result) => {
-            if (result) onResultRef.current(result.getText());
-          }
-        );
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+        });
         if (cancelled) {
-          controls.stop();
+          stream.getTracks().forEach((t) => t.stop());
           return;
         }
-        controlsRef.current = controls;
-        // Once the feed's real dimensions are known, orient the preview.
         const v = videoRef.current;
-        if (v) {
-          v.onloadedmetadata = autoOrient;
+        if (!v) return;
+        v.srcObject = stream;
+        v.onloadedmetadata = () => {
           autoOrient();
-        }
+          v.play().catch(() => {});
+        };
+        await v.play().catch(() => {});
+        timer = setInterval(tick, 150);
       } catch (err) {
         if (cancelled) return;
         const name = (err as { name?: string }).name;
@@ -92,7 +157,8 @@ export default function CameraScanner({
 
     return () => {
       cancelled = true;
-      controlsRef.current?.stop();
+      if (timer) clearInterval(timer);
+      stream?.getTracks().forEach((t) => t.stop());
     };
   }, [autoOrient]);
 
@@ -109,7 +175,8 @@ export default function CameraScanner({
           <div>
             <h2 className="text-2xl font-medium">Scan a barcode</h2>
             <p className="mt-1 text-sm text-ink/50">
-              Point the camera at the tag — it scans automatically.
+              Point the camera at the tag — it scans automatically. Tap Rotate if
+              the picture looks sideways.
             </p>
           </div>
           <button
@@ -142,7 +209,7 @@ export default function CameraScanner({
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <div className="h-1/3 w-2/3 rounded-xl border-2 border-cream/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.25)]" />
             </div>
-            {/* Rotate the preview if it comes in sideways */}
+            {/* Rotate the preview (and the decoded frame) if it comes in sideways */}
             <button
               onClick={() => setRotation((r) => (r + 90) % 360)}
               className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-full bg-ink/70 px-3 py-1.5 text-[13px] text-cream backdrop-blur"
