@@ -2,14 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserMultiFormatReader } from "@zxing/browser";
-import { DecodeHintType } from "@zxing/library";
+import { BarcodeFormat, DecodeHintType } from "@zxing/library";
 
 // Container is aspect-[4/3]; a quarter-turn needs to scale up to keep covering.
 const QUARTER_TURN_SCALE = 4 / 3;
 
-// TRY_HARDER + no format restriction → ZXing decodes any barcode it supports,
-// scanning a little more thoroughly per frame.
-const HINTS = new Map<DecodeHintType, unknown>([[DecodeHintType.TRY_HARDER, true]]);
+// Our tags are Code 128. Pinning the decoder to just that format makes each
+// scan far faster and more reliable (it isn't trying every barcode type), and
+// TRY_HARDER lets it lock on from farther away / a sharper angle.
+const HINTS = new Map<DecodeHintType, unknown>([
+  [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128]],
+  [DecodeHintType.TRY_HARDER, true],
+]);
 
 /**
  * Rear-camera barcode scanner modal. Streams the iPad camera into a <video>
@@ -67,7 +71,7 @@ export default function CameraScanner({
   useEffect(() => {
     let cancelled = false;
     let stream: MediaStream | null = null;
-    let timer: ReturnType<typeof setInterval> | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     let scanned = false;
     const reader = new BrowserMultiFormatReader(HINTS);
     const canvas = document.createElement("canvas");
@@ -97,13 +101,17 @@ export default function CameraScanner({
       return true;
     }
 
-    function tick() {
-      if (scanned) return;
-      const base = rotationRef.current;
-      // Try the oriented frame first, then a quarter turn as a fallback so a
-      // horizontal- vs vertical-barcode mismatch still gets read.
-      for (const extra of [0, 90]) {
-        if (!drawFrame(base + extra)) return;
+    // Self-scheduling loop: decode one orientation per pass and immediately
+    // queue the next, so we scan as fast as the device can decode instead of
+    // waiting on a fixed timer. We alternate between the oriented frame and a
+    // quarter turn so a horizontal/vertical mismatch still gets read, without
+    // paying for two full decodes every pass.
+    let turn = false;
+    function loop() {
+      if (cancelled || scanned) return;
+      const deg = rotationRef.current + (turn ? 90 : 0);
+      turn = !turn;
+      if (drawFrame(deg)) {
         try {
           const result = reader.decodeFromCanvas(canvas);
           if (result) {
@@ -112,10 +120,10 @@ export default function CameraScanner({
             return;
           }
         } catch {
-          // Not-found / checksum / format misses are expected mid-scan — the
-          // next tick (or the quarter-turn fallback) tries again.
+          // Not-found / checksum misses are expected mid-scan — keep going.
         }
       }
+      timer = setTimeout(loop, 40);
     }
 
     (async () => {
@@ -123,8 +131,10 @@ export default function CameraScanner({
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: "environment" },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
+            // Higher resolution = more pixels on the bars, so it locks on from
+            // farther away instead of needing the tag right up to the lens.
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
           },
         });
         if (cancelled) {
@@ -139,7 +149,7 @@ export default function CameraScanner({
           v.play().catch(() => {});
         };
         await v.play().catch(() => {});
-        timer = setInterval(tick, 150);
+        loop();
       } catch (err) {
         if (cancelled) return;
         const name = (err as { name?: string }).name;
@@ -157,7 +167,7 @@ export default function CameraScanner({
 
     return () => {
       cancelled = true;
-      if (timer) clearInterval(timer);
+      if (timer) clearTimeout(timer);
       stream?.getTracks().forEach((t) => t.stop());
     };
   }, [autoOrient]);
