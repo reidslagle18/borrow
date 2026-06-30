@@ -46,7 +46,7 @@ async function createSchema(): Promise<void> {
       fit_notes TEXT,
       silhouette TEXT,
       new_with_tags BOOLEAN NOT NULL DEFAULT false,
-      tier TEXT NOT NULL CHECK (tier IN ('standard','mid','high','premium')),
+      tier TEXT NOT NULL CHECK (tier IN ('value','standard','mid','high','premium')),
       rental_price NUMERIC(8,2) NOT NULL,
       purchase_cost NUMERIC(8,2),
       retail_value NUMERIC(8,2),
@@ -92,7 +92,7 @@ async function createSchema(): Promise<void> {
   // relaxing the original CHECK constraints (Postgres default names).
   await sql`ALTER TABLE items DROP CONSTRAINT IF EXISTS items_tier_check`;
   await sql`ALTER TABLE items ADD CONSTRAINT items_tier_check
-    CHECK (tier IN ('standard','mid','high','premium'))`;
+    CHECK (tier IN ('value','standard','mid','high','premium'))`;
   await sql`ALTER TABLE items DROP CONSTRAINT IF EXISTS items_ownership_check`;
   await sql`ALTER TABLE items ADD CONSTRAINT items_ownership_check
     CHECK (ownership IN ('owned','consignment','ambassador'))`;

@@ -1,4 +1,4 @@
-export type Tier = "standard" | "mid" | "high" | "premium";
+export type Tier = "value" | "standard" | "mid" | "high" | "premium";
 export type Ownership = "owned" | "consignment" | "ambassador";
 export type ItemStatus =
   | "available"
@@ -276,8 +276,9 @@ export interface Rental {
 }
 
 // Tier prices include the 3.99% card-processing markup, rounded UP to a whole
-// dollar (base $35/$45/$65/$85 × 1.0399, then ceil) — no stray cents.
+// dollar (base ×1.0399, then ceil) — no stray cents.
 export const TIERS: { value: Tier; label: string; price: number }[] = [
+  { value: "value", label: "Value", price: 27 },
   { value: "standard", label: "Standard", price: 37 },
   { value: "mid", label: "Mid", price: 47 },
   { value: "high", label: "High", price: 68 },
