@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { sendConsignorRentedEmail } from "@/lib/email";
 import { CONSIGNOR_SHARE } from "@/lib/types";
+import { payoutForCompletedRental } from "@/lib/connect";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -115,6 +116,10 @@ export async function PATCH(request: Request, ctx: Ctx) {
         WHERE id = ${rental.item_id}
       `;
     }
+    // The rental is complete — auto-pay the consignor their share via Stripe
+    // Connect (no-op for owned/ambassador stock; queues if not yet onboarded).
+    // Best-effort: never blocks the check-in.
+    await payoutForCompletedRental(Number(id));
   } else if (b.action === "cancel") {
     if (rental.status === "completed") {
       return NextResponse.json(

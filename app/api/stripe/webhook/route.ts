@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
-import { ensureSchema } from "@/lib/db";
+import { sql, ensureSchema } from "@/lib/db";
 import { getStripe } from "@/lib/stripe";
 import { fulfillReservation } from "@/lib/bookings";
+import { sweepPendingPayouts } from "@/lib/connect";
+import type Stripe from "stripe";
 
 // Stripe calls this unauthenticated; it's verified by signature instead.
 // (Exempted from the studio auth gate in proxy.ts.)
@@ -30,6 +32,21 @@ export async function POST(request: Request) {
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as { id: string };
       await fulfillReservation(session.id);
+    } else if (event.type === "account.updated") {
+      // A consignor's Connect account changed — cache whether they can now
+      // receive payouts, and if so, release any payouts queued while they
+      // hadn't finished onboarding.
+      const acct = event.data.object as Stripe.Account;
+      const ready =
+        !!acct.payouts_enabled && acct.capabilities?.transfers === "active";
+      const rows = await sql`
+        UPDATE consignors SET payouts_enabled = ${ready}
+        WHERE stripe_account_id = ${acct.id}
+        RETURNING id
+      `;
+      if (ready && rows.length > 0) {
+        await sweepPendingPayouts(Number(rows[0].id));
+      }
     }
     // Phase 2 will add: payment_intent.succeeded / payment_intent.payment_failed
     // for the off-session late-fee + replacement charges.

@@ -25,7 +25,7 @@ export async function POST(request: Request) {
   let consignors;
   if (email && digits.length >= 7) {
     consignors = await sql`
-      SELECT id, name, phone, email FROM consignors
+      SELECT id, name, phone, email, stripe_account_id, payouts_enabled FROM consignors
       WHERE lower(email) = ${email}
         AND regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') = ${digits}
       LIMIT 1
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
     }
   } else if (code && code.length >= 6) {
     consignors = await sql`
-      SELECT id, name, phone, email FROM consignors WHERE portal_code = ${code}
+      SELECT id, name, phone, email, stripe_account_id, payouts_enabled FROM consignors WHERE portal_code = ${code}
     `;
     if (consignors.length === 0) {
       return NextResponse.json(
@@ -91,5 +91,9 @@ export async function POST(request: Request) {
     earned,
     paid,
     owed: Math.max(0, earned - paid),
+    direct_deposit: {
+      active: !!c.payouts_enabled,
+      started: !!c.stripe_account_id,
+    },
   });
 }

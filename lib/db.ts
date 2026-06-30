@@ -32,6 +32,11 @@ async function createSchema(): Promise<void> {
   // Consignor payout details (how BORROW sends them their money).
   await sql`ALTER TABLE consignors ADD COLUMN IF NOT EXISTS venmo TEXT`;
   await sql`ALTER TABLE consignors ADD COLUMN IF NOT EXISTS payout_backup TEXT`;
+  // Stripe Connect (automatic bank payouts). stripe_account_id is their Express
+  // connected account; payouts_enabled is cached from Stripe once onboarding +
+  // identity/bank verification is complete and transfers are active.
+  await sql`ALTER TABLE consignors ADD COLUMN IF NOT EXISTS stripe_account_id TEXT`;
+  await sql`ALTER TABLE consignors ADD COLUMN IF NOT EXISTS payouts_enabled BOOLEAN NOT NULL DEFAULT false`;
   await sql`CREATE SEQUENCE IF NOT EXISTS item_id_seq START 1`;
   await sql`
     CREATE TABLE IF NOT EXISTS items (
@@ -151,6 +156,17 @@ async function createSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+  // Automatic per-rental payouts (Stripe Connect transfers).
+  //  - rental_id ties a payout to the completed rental that earned it, and is
+  //    UNIQUE so a rental can only ever pay out once (idempotency).
+  //  - status: 'paid' (transfer succeeded or recorded manually), 'pending'
+  //    (owed but not yet sent — consignor not onboarded or funds not settled;
+  //    a cron sweep retries these), or 'failed'.
+  await sql`ALTER TABLE payouts ADD COLUMN IF NOT EXISTS rental_id INT REFERENCES rentals(id) ON DELETE SET NULL`;
+  await sql`ALTER TABLE payouts ADD COLUMN IF NOT EXISTS stripe_transfer_id TEXT`;
+  await sql`ALTER TABLE payouts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'paid'`;
+  await sql`ALTER TABLE payouts ADD COLUMN IF NOT EXISTS auto BOOLEAN NOT NULL DEFAULT false`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS payouts_rental_key ON payouts(rental_id) WHERE rental_id IS NOT NULL`;
 
   // A checkout = one transaction covering one or more pieces for a customer.
   // Each piece also gets its own rental row (below) linked back via

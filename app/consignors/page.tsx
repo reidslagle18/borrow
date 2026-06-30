@@ -27,9 +27,12 @@ type ConsignorRow = Consignor & {
 
 type ConsignorDetail = ConsignorRow & {
   items: (Item & { completed_rentals: number; earned: number })[];
-  payouts: Payout[];
+  payouts: (Payout & { status?: string; auto?: boolean })[];
   charges: ConsignorCharge[];
   cleaning_charges: number;
+  stripe_account_id: string | null;
+  payouts_enabled: boolean;
+  pending_payouts: number;
 };
 
 const STATUS_BADGE: Record<ItemStatus, string> = {
@@ -168,6 +171,24 @@ function DetailModal({
   const [dryClean, setDryClean] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [connectUrl, setConnectUrl] = useState("");
+  const [connectBusy, setConnectBusy] = useState(false);
+  const [connectMsg, setConnectMsg] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  async function getConnectLink() {
+    setConnectBusy(true);
+    setConnectMsg("");
+    const res = await fetch("/api/stripe/connect/onboard-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ consignor_id: id }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (res.ok && d.url) setConnectUrl(d.url);
+    else setConnectMsg(d.error || "Couldn't create a link — is Stripe Connect turned on?");
+    setConnectBusy(false);
+  }
 
   async function remove() {
     const res = await fetch(`/api/consignors/${id}`, { method: "DELETE" });
@@ -341,6 +362,68 @@ function DetailModal({
               </p>
             )}
 
+            {/* Direct deposit (Stripe Connect) */}
+            <div className="mt-4 rounded-2xl bg-white p-4">
+              <div className="flex items-center justify-between">
+                <p className={`${labelCls} mb-0`}>Direct deposit · automatic payouts</p>
+                {detail.payouts_enabled ? (
+                  <span className="rounded-full bg-sage px-2.5 py-1 text-[11px]">Active</span>
+                ) : detail.stripe_account_id ? (
+                  <span className="rounded-full bg-butter px-2.5 py-1 text-[11px]">Setup started</span>
+                ) : (
+                  <span className="rounded-full bg-ink/10 px-2.5 py-1 text-[11px] text-ink/60">Not set up</span>
+                )}
+              </div>
+              {detail.payouts_enabled ? (
+                <p className="mt-1.5 text-[13px] text-ink/55">
+                  Their 60% is sent to their bank automatically when one of their
+                  pieces is returned.
+                </p>
+              ) : (
+                <p className="mt-1.5 text-[13px] text-ink/55">
+                  Send them a secure link to add their bank &amp; ID. Until they
+                  finish, their payouts are queued
+                  {detail.pending_payouts > 0
+                    ? ` — ${money(detail.pending_payouts)} waiting`
+                    : ""}{" "}
+                  and sent automatically once they&apos;re set up.
+                </p>
+              )}
+              {!detail.payouts_enabled &&
+                (connectUrl ? (
+                  <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => {
+                        navigator.clipboard?.writeText(connectUrl);
+                        setCopied(true);
+                        setTimeout(() => setCopied(false), 1500);
+                      }}
+                      className="rounded-full bg-ink px-4 py-2 text-[13px] text-cream"
+                    >
+                      {copied ? "Copied ✓" : "Copy link to send them"}
+                    </button>
+                    <a
+                      href={connectUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-full border border-ink/15 px-4 py-2 text-[13px] text-ink/60"
+                    >
+                      Open now
+                    </a>
+                    <span className="text-[12px] text-ink/40">Link expires in a few minutes.</span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={getConnectLink}
+                    disabled={connectBusy}
+                    className="mt-2.5 rounded-full border border-ink/15 px-4 py-2 text-[13px] text-ink/70 disabled:opacity-40"
+                  >
+                    {connectBusy ? "Creating link…" : "Get direct-deposit link"}
+                  </button>
+                ))}
+              {connectMsg && <p className="mt-2 text-[13px] text-blush-deep">{connectMsg}</p>}
+            </div>
+
             {/* Record payout */}
             <div className="mt-4 rounded-2xl bg-lavender/25 p-4">
               <p className={labelCls}>Record payout</p>
@@ -497,8 +580,13 @@ function DetailModal({
                       <span>
                         {money(p.amount)}
                         {p.method && <span className="text-ink/50"> · {p.method}</span>}
+                        {p.status === "pending" && (
+                          <span className="ml-2 rounded-full bg-butter px-2 py-0.5 text-[11px]">queued</span>
+                        )}
                       </span>
-                      <span className="text-ink/45">{fmtShort(dateOnly(p.paid_at))}</span>
+                      <span className="text-ink/45">
+                        {p.status === "pending" ? "waiting to send" : fmtShort(dateOnly(p.paid_at))}
+                      </span>
                     </div>
                   ))}
                 </div>

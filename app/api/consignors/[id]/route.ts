@@ -34,7 +34,13 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   const revenue = items.reduce((s, i) => s + Number(i.revenue), 0);
   const earned = Math.round(revenue * CONSIGNOR_SHARE * 100) / 100;
-  const paid = payouts.reduce((s, p) => s + Number(p.amount), 0);
+  // Only money actually sent counts as paid; queued auto-payouts are still owed.
+  const paid = payouts
+    .filter((p) => p.status !== "pending")
+    .reduce((s, p) => s + Number(p.amount), 0);
+  const pendingPayouts = payouts
+    .filter((p) => p.status === "pending")
+    .reduce((s, p) => s + Number(p.amount), 0);
   const charged = charges.reduce((s, c) => s + Number(c.amount), 0);
 
   return NextResponse.json({
@@ -47,6 +53,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     charges,
     earned,
     paid,
+    pending_payouts: pendingPayouts,
     cleaning_charges: charged,
     owed: Math.max(0, earned - charged - paid),
   });

@@ -11,7 +11,8 @@ export async function GET() {
       (SELECT COALESCE(SUM(r.rental_price), 0)
          FROM rentals r JOIN items i ON i.id = r.item_id
         WHERE i.consignor_id = c.id AND r.status = 'completed') AS completed_revenue,
-      (SELECT COALESCE(SUM(p.amount), 0) FROM payouts p WHERE p.consignor_id = c.id) AS paid
+      (SELECT COALESCE(SUM(p.amount), 0) FROM payouts p
+        WHERE p.consignor_id = c.id AND p.status != 'pending') AS paid
     FROM consignors c
     ORDER BY c.name ASC
   `;
