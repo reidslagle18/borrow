@@ -93,6 +93,7 @@ function CheckoutInner() {
   const [readers, setReaders] = useState<TerminalReader[] | null>(null);
   const [readerId, setReaderId] = useState(""); // the chosen/active reader
   const [readerError, setReaderError] = useState("");
+  const [readerCleared, setReaderCleared] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   // In-person tap state: shown as an overlay once an order is created and the
@@ -293,11 +294,23 @@ function CheckoutInner() {
     credit_applied: number;
   } | null>(null);
 
+  // Tell the reader to stop prompting (clears a stuck "please tap" screen).
+  async function clearReader() {
+    const rid = chargedReaderRef.current || readerId;
+    if (!rid) return;
+    await fetch("/api/stripe/terminal/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reader_id: rid }),
+    }).catch(() => {});
+  }
+
   // Throw away a not-yet-paid order (e.g. the tap was canceled) so the piece is
-  // freed instead of left marked Rented Out. Returns to the checkout form.
+  // freed instead of left marked Rented Out. Also stops the reader prompting.
   async function discardOrder() {
     const data = pendingOrder.current;
     setTap(null);
+    await clearReader();
     if (data?.transaction?.id) {
       await fetch("/api/checkout/cancel", {
         method: "POST",
@@ -312,6 +325,8 @@ function CheckoutInner() {
   function finishTerminal(paymentPending: boolean) {
     const data = pendingOrder.current;
     if (!data) return;
+    // Finishing without a completed tap → stop the reader still prompting.
+    if (paymentPending) clearReader();
     setTap(null);
     setDone({
       id: data.transaction.id,
@@ -949,15 +964,29 @@ function CheckoutInner() {
                     ) : null;
                   })()}
                 </span>
-                {(readers?.length ?? 0) > 1 && (
+                <span className="flex shrink-0 items-center gap-3">
                   <button
                     type="button"
-                    onClick={() => setReaderId("")}
+                    onClick={async () => {
+                      await clearReader();
+                      setReaderCleared(true);
+                      setTimeout(() => setReaderCleared(false), 2500);
+                    }}
                     className="text-ink/50 underline underline-offset-2"
+                    title="Stop the reader if it's stuck showing 'please tap'"
                   >
-                    Change
+                    {readerCleared ? "Cleared ✓" : "Clear reader"}
                   </button>
-                )}
+                  {(readers?.length ?? 0) > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setReaderId("")}
+                      className="text-ink/50 underline underline-offset-2"
+                    >
+                      Change
+                    </button>
+                  )}
+                </span>
               </div>
             )}
             <p className="mt-1.5 text-[12px] text-ink/45">
