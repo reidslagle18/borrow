@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
-import { getStripe } from "@/lib/stripe";
+import { getStripe, ensureStripeCustomer } from "@/lib/stripe";
 
 /**
  * Starts an in-person charge for a checkout transaction on the Terminal reader.
@@ -38,22 +38,8 @@ export async function POST(request: Request) {
 
   // Link (or create) a Stripe customer so the card can be saved for later
   // off-session charges (late fees / damage), same as the online + card-on-file
-  // flows. Only possible when the checkout has a customer on it.
-  let stripeCustomerId: string | undefined;
-  if (tx.customer_id) {
-    const c = await sql`SELECT id, name, email, stripe_customer_id FROM customers WHERE id = ${tx.customer_id}`;
-    const cust = c[0];
-    stripeCustomerId = cust?.stripe_customer_id || undefined;
-    if (cust && !stripeCustomerId) {
-      const created = await stripe.customers.create({
-        name: cust.name || undefined,
-        email: cust.email || undefined,
-        metadata: { customer_id: String(cust.id) },
-      });
-      stripeCustomerId = created.id;
-      await sql`UPDATE customers SET stripe_customer_id = ${created.id} WHERE id = ${cust.id}`;
-    }
-  }
+  // flows. Resilient to stale ids (verifies/recreates in the current mode).
+  const stripeCustomerId = (await ensureStripeCustomer(stripe, tx.customer_id)) ?? undefined;
 
   const pi = await stripe.paymentIntents.create({
     amount,

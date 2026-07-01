@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
-import { getStripe } from "@/lib/stripe";
+import { getStripe, ensureStripeCustomer } from "@/lib/stripe";
 import { getProgram } from "@/lib/credits";
 import { findOrCreateCustomer } from "@/lib/bookings";
 
@@ -61,18 +61,12 @@ export async function POST(request: Request) {
     email: b.customer.email,
   });
 
-  // Reuse/create the Stripe Customer so the saved card attaches to them.
-  const crows = await sql`SELECT stripe_customer_id, name, email, phone FROM customers WHERE id = ${customerId}`;
-  let stripeCustomerId: string = crows[0]?.stripe_customer_id;
+  // Reuse/create the Stripe Customer so the saved card attaches to them —
+  // resilient to a stale id (verifies it exists in the current mode, else makes
+  // a fresh one) so "No such customer" can never break the reservation.
+  const stripeCustomerId = await ensureStripeCustomer(stripe, customerId);
   if (!stripeCustomerId) {
-    const sc = await stripe.customers.create({
-      name: crows[0]?.name || b.customer.name,
-      email: crows[0]?.email || b.customer.email || undefined,
-      phone: crows[0]?.phone || b.customer.phone || undefined,
-      metadata: { borrow_customer_id: String(customerId) },
-    });
-    stripeCustomerId = sc.id;
-    await sql`UPDATE customers SET stripe_customer_id = ${stripeCustomerId} WHERE id = ${customerId}`;
+    return NextResponse.json({ error: "Couldn't set up payment" }, { status: 500 });
   }
 
   const cleaningFee = (await getProgram()).cleaning_fee;
