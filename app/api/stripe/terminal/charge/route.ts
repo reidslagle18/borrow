@@ -36,10 +36,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ payment_intent_id: null, status: "succeeded" });
   }
 
+  // Link (or create) a Stripe customer so the card can be saved for later
+  // off-session charges (late fees / damage), same as the online + card-on-file
+  // flows. Only possible when the checkout has a customer on it.
   let stripeCustomerId: string | undefined;
   if (tx.customer_id) {
-    const c = await sql`SELECT stripe_customer_id FROM customers WHERE id = ${tx.customer_id}`;
-    stripeCustomerId = c[0]?.stripe_customer_id || undefined;
+    const c = await sql`SELECT id, name, email, stripe_customer_id FROM customers WHERE id = ${tx.customer_id}`;
+    const cust = c[0];
+    stripeCustomerId = cust?.stripe_customer_id || undefined;
+    if (cust && !stripeCustomerId) {
+      const created = await stripe.customers.create({
+        name: cust.name || undefined,
+        email: cust.email || undefined,
+        metadata: { customer_id: String(cust.id) },
+      });
+      stripeCustomerId = created.id;
+      await sql`UPDATE customers SET stripe_customer_id = ${created.id} WHERE id = ${cust.id}`;
+    }
   }
 
   const pi = await stripe.paymentIntents.create({
@@ -48,6 +61,9 @@ export async function POST(request: Request) {
     payment_method_types: ["card_present"],
     capture_method: "automatic",
     customer: stripeCustomerId,
+    // With a customer attached, save a reusable card generated from the tap so
+    // the late-fee / damage engine can charge it off-session later.
+    ...(stripeCustomerId ? { setup_future_usage: "off_session" as const } : {}),
     metadata: { transaction_id: String(tx.id) },
   });
 

@@ -15,7 +15,14 @@ export default function SettingsPage() {
   const [savedAt, setSavedAt] = useState(false);
   const [newDate, setNewDate] = useState("");
   const [readers, setReaders] = useState<
-    { id: string; label: string | null; device_type: string; status: string }[]
+    {
+      id: string;
+      label: string | null;
+      device_type: string;
+      status: string;
+      location: string | null;
+      location_name: string | null;
+    }[]
   >([]);
   const [readerMsg, setReaderMsg] = useState("");
   const [readerBusy, setReaderBusy] = useState(false);
@@ -320,22 +327,54 @@ export default function SettingsPage() {
                 </button>
               </div>
               {readers.length > 0 && (
-                <div className="mt-3 space-y-1.5">
-                  {readers.map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() =>
-                        setProgram((p) => ({ ...p, terminal_reader_id: r.id }))
-                      }
-                      className="block w-full rounded-xl border border-ink/10 bg-white px-3.5 py-2 text-left text-sm hover:bg-cream"
-                    >
-                      <span className="font-mono">{r.id}</span>
-                      <span className="text-ink/50">
-                        {" "}
-                        · {r.label || r.device_type} · {r.status}
-                      </span>
-                    </button>
+                <div className="mt-3 space-y-3">
+                  {Object.entries(
+                    readers.reduce<Record<string, typeof readers>>((groups, r) => {
+                      const key = r.location_name || "No location";
+                      (groups[key] ||= []).push(r);
+                      return groups;
+                    }, {})
+                  ).map(([loc, group]) => (
+                    <div key={loc}>
+                      <p className="mb-1 text-[11px] uppercase tracking-[0.15em] text-ink/40">
+                        {loc}
+                      </p>
+                      <div className="space-y-1.5">
+                        {group.map((r) => {
+                          const selected = program.terminal_reader_id === r.id;
+                          return (
+                            <button
+                              key={r.id}
+                              type="button"
+                              onClick={() =>
+                                setProgram((p) => ({ ...p, terminal_reader_id: r.id }))
+                              }
+                              className={`block w-full rounded-xl border px-3.5 py-2 text-left text-sm ${
+                                selected
+                                  ? "border-ink bg-ink text-cream"
+                                  : "border-ink/10 bg-white hover:bg-cream"
+                              }`}
+                            >
+                              <span className="font-medium">
+                                {r.label || r.device_type}
+                              </span>
+                              <span className={selected ? "text-cream/70" : "text-ink/50"}>
+                                {" "}
+                                · {r.status}
+                                {selected ? " · selected" : ""}
+                              </span>
+                              <span
+                                className={`mt-0.5 block font-mono text-[12px] ${
+                                  selected ? "text-cream/60" : "text-ink/40"
+                                }`}
+                              >
+                                {r.id}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   ))}
                 </div>
               )}
