@@ -193,6 +193,14 @@ async function createSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+  // Refunds: allow the 'refunded' status and record the refund details.
+  await sql`ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_payment_status_check`;
+  await sql`ALTER TABLE transactions ADD CONSTRAINT transactions_payment_status_check
+    CHECK (payment_status IN ('collected','pending','void','refunded'))`;
+  await sql`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS refund_amount NUMERIC(10,2) NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS stripe_refund_id TEXT`;
+
   // Link rentals to their checkout transaction (additive; existing rows null).
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS transaction_id INT REFERENCES transactions(id)`;
   // Actual Cleaning & Care Fee charged on this rental (the damage_waiver boolean
