@@ -352,19 +352,23 @@ function CheckoutInner() {
       chargedReaderRef.current = cd.reader_id || readerId;
       if (cd.status === "succeeded") return finishTerminal(false); // nothing to charge
       setTap({ status: "waiting", txId, piId: cd.payment_intent_id });
-      pollTap(cd.payment_intent_id, txId, 0);
+      pollTap(cd.payment_intent_id, txId, 0, chargedReaderRef.current);
     } catch {
       setTap({ status: "error", txId, piId: null, message: "Couldn't reach the reader." });
     }
   }
 
-  async function pollTap(piId: string, txId: number, attempt: number) {
+  async function pollTap(piId: string, txId: number, attempt: number, reader: string) {
     const MAX = 45; // ~90s at 2s intervals
     try {
       const pr = await fetch("/api/stripe/terminal/poll", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payment_intent_id: piId, transaction_id: txId }),
+        body: JSON.stringify({
+          payment_intent_id: piId,
+          transaction_id: txId,
+          reader_id: reader || undefined,
+        }),
       });
       const pd = await pr.json().catch(() => ({}));
       if (pd.status === "succeeded") return finishTerminal(false);
@@ -376,11 +380,11 @@ function CheckoutInner() {
         return setTap({ status: "error", txId, piId, message: "Payment wasn't collected." });
       if (attempt >= MAX)
         return setTap({ status: "error", txId, piId, message: "Timed out waiting for the tap." });
-      setTimeout(() => pollTap(piId, txId, attempt + 1), 2000);
+      setTimeout(() => pollTap(piId, txId, attempt + 1, reader), 2000);
     } catch {
       if (attempt >= MAX)
         return setTap({ status: "error", txId, piId, message: "Lost connection to the reader." });
-      setTimeout(() => pollTap(piId, txId, attempt + 1), 2000);
+      setTimeout(() => pollTap(piId, txId, attempt + 1, reader), 2000);
     }
   }
 
