@@ -49,8 +49,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ status: "succeeded", pi_status: pi.status });
   }
 
-  if (pi.status === "canceled" || pi.status === "requires_payment_method") {
-    return NextResponse.json({ status: "failed", pi_status: pi.status });
+  if (pi.status === "canceled") {
+    return NextResponse.json({ status: "canceled", pi_status: pi.status });
+  }
+  if (pi.status === "requires_payment_method") {
+    return NextResponse.json({ status: "declined", pi_status: pi.status });
   }
 
   // requires_action / requires_confirmation / processing → still waiting on the tap

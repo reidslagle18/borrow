@@ -293,6 +293,22 @@ function CheckoutInner() {
     credit_applied: number;
   } | null>(null);
 
+  // Throw away a not-yet-paid order (e.g. the tap was canceled) so the piece is
+  // freed instead of left marked Rented Out. Returns to the checkout form.
+  async function discardOrder() {
+    const data = pendingOrder.current;
+    setTap(null);
+    if (data?.transaction?.id) {
+      await fetch("/api/checkout/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transaction_id: data.transaction.id }),
+      }).catch(() => {});
+    }
+    pendingOrder.current = null;
+    setSubmitting(false);
+  }
+
   function finishTerminal(paymentPending: boolean) {
     const data = pendingOrder.current;
     if (!data) return;
@@ -352,8 +368,12 @@ function CheckoutInner() {
       });
       const pd = await pr.json().catch(() => ({}));
       if (pd.status === "succeeded") return finishTerminal(false);
+      if (pd.status === "canceled")
+        return setTap({ status: "error", txId, piId, message: "Payment canceled on the reader." });
+      if (pd.status === "declined")
+        return setTap({ status: "error", txId, piId, message: "Card was declined — try again or use another card." });
       if (pd.status === "failed")
-        return setTap({ status: "error", txId, piId, message: "Card declined or canceled." });
+        return setTap({ status: "error", txId, piId, message: "Payment wasn't collected." });
       if (attempt >= MAX)
         return setTap({ status: "error", txId, piId, message: "Timed out waiting for the tap." });
       setTimeout(() => pollTap(piId, txId, attempt + 1), 2000);
@@ -1062,6 +1082,12 @@ function CheckoutInner() {
                     className="rounded-full px-6 py-2 text-[15px] text-ink/50"
                   >
                     Finish &amp; collect another way
+                  </button>
+                  <button
+                    onClick={discardOrder}
+                    className="rounded-full px-6 py-2 text-[15px] text-blush-deep"
+                  >
+                    Cancel &amp; free the piece
                   </button>
                 </div>
               </>
