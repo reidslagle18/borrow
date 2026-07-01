@@ -78,6 +78,12 @@ export async function POST(request: Request) {
 
   await stripe.terminal.readers.processPaymentIntent(readerId, {
     payment_intent: pi.id,
+    // Required by Stripe when the payment saves a card (setup_future_usage).
+    // "always" = we may charge this saved card off-session later (late
+    // fees / damage). Only sent when there's a customer to save it to.
+    ...(stripeCustomerId
+      ? { process_config: { allow_redisplay: "always" as const } }
+      : {}),
   });
 
   // Test mode: simulate the customer tapping a card on the simulated reader.
