@@ -1,33 +1,19 @@
 import { NextResponse } from "next/server";
 import { getStripe } from "@/lib/stripe";
+import { listLiveReaders } from "@/lib/terminal";
 
 /**
- * List registered Terminal readers with their Location, so Settings can group
- * them by store location and let staff pick which reader to charge to.
+ * List registered Terminal readers with their Location (live from Stripe), so
+ * checkout + Settings always work off the current account/mode's real readers.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const stripe = getStripe();
   if (!stripe) {
     return NextResponse.json({ error: "Stripe not configured" }, { status: 400 });
   }
-  const [readers, locations] = await Promise.all([
-    stripe.terminal.readers.list({ limit: 100 }),
-    stripe.terminal.locations.list({ limit: 100 }),
-  ]);
-  const locName = new Map(locations.data.map((l) => [l.id, l.display_name]));
-  return NextResponse.json({
-    readers: readers.data.map((r) => {
-      const locId = typeof r.location === "string" ? r.location : r.location?.id ?? null;
-      return {
-        id: r.id,
-        label: r.label,
-        device_type: r.device_type,
-        status: r.status,
-        location: locId,
-        location_name: locId ? locName.get(locId) ?? null : null,
-      };
-    }),
-  });
+  const location = new URL(request.url).searchParams.get("location") || undefined;
+  const readers = await listLiveReaders(stripe, location);
+  return NextResponse.json({ readers });
 }
 
 /**

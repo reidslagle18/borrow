@@ -35,6 +35,17 @@ function money(n: number): string {
   return `$${Number(n) % 1 === 0 ? Number(n) : Number(n).toFixed(2)}`;
 }
 
+type TerminalReader = {
+  id: string;
+  label: string | null;
+  device_type: string;
+  status: string;
+  location: string | null;
+  location_name: string | null;
+};
+
+const REMEMBERED_READER_KEY = "borrow_terminal_reader";
+
 export default function CheckoutPage() {
   return (
     <Elements stripe={stripePromise}>
@@ -77,7 +88,11 @@ function CheckoutInner() {
 
   const [ambCustomerIds, setAmbCustomerIds] = useState<Set<number>>(new Set());
   const [cleaningFee, setCleaningFee] = useState<number>(CLEANING_FEE_DEFAULT);
-  const [terminalReaderId, setTerminalReaderId] = useState("");
+  // Terminal readers are looked up live from Stripe (never a stored id, which
+  // could be from the wrong mode). null = still loading.
+  const [readers, setReaders] = useState<TerminalReader[] | null>(null);
+  const [readerId, setReaderId] = useState(""); // the chosen/active reader
+  const [readerError, setReaderError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   // In-person tap state: shown as an overlay once an order is created and the
@@ -101,19 +116,44 @@ function CheckoutInner() {
   useEffect(() => {
     (async () => {
       try {
-        const [ir, cr, ar, sr] = await Promise.all([
+        const [ir, cr, ar, sr, rd] = await Promise.all([
           fetch("/api/items"),
           fetch("/api/customers"),
           fetch("/api/ambassadors"),
           fetch("/api/settings"),
+          fetch("/api/stripe/terminal/readers"),
         ]);
         if (!ir.ok) throw new Error("items");
         setItems(await ir.json());
         if (cr.ok) setCustomers(await cr.json());
+        let settingsPref = "";
         if (sr.ok) {
           const s = await sr.json();
           if (s.program?.cleaning_fee != null) setCleaningFee(s.program.cleaning_fee);
-          if (s.program?.terminal_reader_id) setTerminalReaderId(s.program.terminal_reader_id);
+          if (s.program?.terminal_reader_id) settingsPref = s.program.terminal_reader_id;
+        }
+        // Resolve the reader from the LIVE list: prefer the one remembered on
+        // this device, else the settings default, but only if it actually
+        // exists now; if just one reader, use it; if several, make staff pick.
+        if (rd.ok) {
+          const list: TerminalReader[] = (await rd.json()).readers || [];
+          setReaders(list);
+          if (list.length === 0) {
+            setReaderError("No reader connected in Stripe — check Terminal → Readers.");
+          } else {
+            const remembered =
+              (typeof localStorage !== "undefined" &&
+                localStorage.getItem(REMEMBERED_READER_KEY)) ||
+              "";
+            const pref = [remembered, settingsPref].find(
+              (id) => id && list.some((x) => x.id === id)
+            );
+            if (pref) setReaderId(pref);
+            else if (list.length === 1) setReaderId(list[0].id);
+          }
+        } else {
+          // Stripe not configured / lookup failed → no in-person tap available.
+          setReaders([]);
         }
         if (ar.ok) {
           const amb = await ar.json();
@@ -132,9 +172,19 @@ function CheckoutInner() {
   }, []);
 
   const isAmbassador = customerId !== "" && ambCustomerIds.has(customerId);
-  // When a Terminal reader is configured, payment is collected by tapping the
-  // reader (no card typing), and we skip the manual card-on-file step.
-  const useTerminal = !!terminalReaderId;
+  // In-person tap is the payment method whenever this account has at least one
+  // live Terminal reader; then we skip the manual card-on-file step.
+  const useTerminal = (readers?.length ?? 0) > 0;
+  const needsReaderChoice = useTerminal && !readerId;
+
+  function pickReader(id: string) {
+    setReaderId(id);
+    try {
+      localStorage.setItem(REMEMBERED_READER_KEY, id);
+    } catch {
+      /* private mode — fine, it just won't be remembered */
+    }
+  }
 
   const byId = useMemo(() => {
     const m = new Map<string, Item>();
@@ -258,19 +308,32 @@ function CheckoutInner() {
     });
   }
 
+  // The reader the charge actually went to (from the live resolution), so a
+  // cancel targets the right device.
+  const chargedReaderRef = useRef<string>("");
+
   async function startTap(txId: number) {
     setTap({ status: "waiting", txId, piId: null });
     try {
       const cr = await fetch("/api/stripe/terminal/charge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transaction_id: txId, reader_id: terminalReaderId }),
+        body: JSON.stringify({ transaction_id: txId, reader_id: readerId || undefined }),
       });
       const cd = await cr.json().catch(() => ({}));
       if (!cr.ok) {
+        // Live resolution says the reader picture changed — surface it clearly
+        // and let staff re-pick without losing the order.
+        if (cd.code === "multiple_readers" && Array.isArray(cd.readers)) {
+          setReaders(cd.readers);
+          setReaderId("");
+        } else if (cd.code === "no_reader") {
+          setReaderError(cd.error);
+        }
         setTap({ status: "error", txId, piId: null, message: cd.error || "Couldn't start the reader." });
         return;
       }
+      chargedReaderRef.current = cd.reader_id || readerId;
       if (cd.status === "succeeded") return finishTerminal(false); // nothing to charge
       setTap({ status: "waiting", txId, piId: cd.payment_intent_id });
       pollTap(cd.payment_intent_id, txId, 0);
@@ -307,7 +370,10 @@ function CheckoutInner() {
     await fetch("/api/stripe/terminal/cancel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reader_id: terminalReaderId, payment_intent_id: t.piId }),
+      body: JSON.stringify({
+        reader_id: chargedReaderRef.current || readerId,
+        payment_intent_id: t.piId,
+      }),
     }).catch(() => {});
     setTap({
       status: "error",
@@ -335,6 +401,11 @@ function CheckoutInner() {
     // replacement charges to this card).
     if (stripeEnabled && !useTerminal && customerId === "") {
       setError("Add a customer so their card can be saved on file.");
+      return;
+    }
+    // Several readers registered but none chosen yet.
+    if (needsReaderChoice) {
+      setError("Choose which reader to charge before checking out.");
       return;
     }
     setSubmitting(true);
@@ -814,6 +885,73 @@ function CheckoutInner() {
           </section>
         )}
 
+        {/* Card reader (in-person tap) */}
+        {useTerminal && (
+          <section className="mt-7">
+            <label className={labelCls}>Card reader</label>
+            {needsReaderChoice ? (
+              <>
+                <p className="mb-2 text-[13px] text-ink/60">
+                  More than one reader is registered — pick which one to charge:
+                </p>
+                <div className="space-y-1.5">
+                  {(readers ?? []).map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => pickReader(r.id)}
+                      className="block w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2 text-left text-sm hover:bg-cream"
+                    >
+                      <span className="font-medium">{r.label || r.device_type}</span>
+                      <span className="text-ink/50">
+                        {" "}
+                        · {r.location_name || "No location"} · {r.status}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-between rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-sm">
+                <span>
+                  Charging to{" "}
+                  <span className="font-medium">
+                    {(readers ?? []).find((r) => r.id === readerId)?.label || "reader"}
+                  </span>
+                  {(() => {
+                    const r = (readers ?? []).find((x) => x.id === readerId);
+                    return r?.location_name ? (
+                      <span className="text-ink/50"> · {r.location_name}</span>
+                    ) : null;
+                  })()}
+                </span>
+                {(readers?.length ?? 0) > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setReaderId("")}
+                    className="text-ink/50 underline underline-offset-2"
+                  >
+                    Change
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="mt-1.5 text-[12px] text-ink/45">
+              The customer pays on the reader. Their card is saved for later
+              late-fee / damage charges.
+            </p>
+          </section>
+        )}
+        {readers !== null && readers.length === 0 && readerError && (
+          <section className="mt-7">
+            <div className="rounded-2xl bg-butter/40 px-4 py-3 text-sm text-ink/70">
+              {readerError} In-person tap is unavailable until a reader is
+              connected; you can still save a card on file and collect payment
+              another way.
+            </div>
+          </section>
+        )}
+
         {/* Totals */}
         <section className="mt-7 rounded-2xl bg-white/70 p-5">
           <div className="flex justify-between text-sm text-ink/60">
@@ -868,14 +1006,16 @@ function CheckoutInner() {
 
         <button
           onClick={checkout}
-          disabled={submitting || selected.length === 0}
+          disabled={submitting || selected.length === 0 || needsReaderChoice}
           className="mt-6 w-full rounded-full bg-ink px-6 py-4 text-base text-cream transition-opacity disabled:opacity-40"
         >
           {submitting
             ? "Processing…"
-            : useTerminal
-              ? `Charge on reader & check out · ${money(total)}`
-              : `Collect payment & check out · ${money(total)}`}
+            : needsReaderChoice
+              ? "Pick a reader above to continue"
+              : useTerminal
+                ? `Charge on reader & check out · ${money(total)}`
+                : `Collect payment & check out · ${money(total)}`}
         </button>
         <p className="mt-2 text-center text-xs text-ink/40">
           {useTerminal
