@@ -8,6 +8,12 @@ import { sql, ensureSchema } from "@/lib/db";
  */
 export async function GET() {
   await ensureSchema();
+  // Curated Recommended order (item ids). Listed pieces sort first in exactly
+  // that order; everything else falls back to newest-available-first.
+  const orderRows = await sql`SELECT value FROM app_settings WHERE key = 'recommended_order'`;
+  const order: string[] = Array.isArray(orderRows[0]?.value)
+    ? (orderRows[0].value as string[])
+    : [];
   const rows = await sql`
     SELECT
       i.id, COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.size, i.color, i.silhouette, i.tier, i.rental_price, i.retail_value,
@@ -26,7 +32,7 @@ export async function GET() {
      AND r.due_date >= CURRENT_DATE
     WHERE i.status NOT IN ('retired', 'with_consignor')
     GROUP BY i.id
-    ORDER BY i.created_at DESC
+    ORDER BY array_position(${order}::text[], i.id) NULLS LAST, i.created_at DESC
   `;
   return NextResponse.json(rows, {
     headers: { "Cache-Control": "no-store" },
