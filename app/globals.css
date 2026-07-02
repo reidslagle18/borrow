@@ -36,6 +36,20 @@ input, select, textarea, button {
   font-family: inherit;
 }
 
+/* Touch devices (iPad): keep form fields at 16px so iOS Safari doesn't zoom in
+   on focus, and give inputs/selects/textareas a finger-friendly minimum height.
+   Buttons are left alone so small icon/pill controls keep their shape. */
+@media (pointer: coarse) {
+  input, select, textarea {
+    font-size: 16px;
+  }
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    min-height: 44px;
+  }
+}
+
 /* calm, minimal scrollbar */
 * {
   scrollbar-width: thin;

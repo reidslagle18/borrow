@@ -23,7 +23,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen md:flex">
       {/* Sidebar (desktop / iPad landscape) */}
-      <aside className="hidden md:flex md:w-56 md:flex-col md:border-r md:border-ink/10 md:px-6 md:py-8 shrink-0">
+      <aside className="hidden shrink-0 md:flex md:h-screen md:w-56 md:flex-col md:overflow-y-auto md:border-r md:border-ink/10 md:px-6 md:py-8 lg:sticky lg:top-0">
         <Link href="/inventory" className="block">
           <span className="font-serif text-3xl italic font-medium tracking-tight">
             BORROW
@@ -38,7 +38,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`rounded-full px-4 py-2.5 text-[15px] transition-colors ${
+                className={`rounded-full px-4 py-3 text-[15px] transition-colors ${
                   pathname.startsWith(item.href)
                     ? "bg-ink text-cream"
                     : "text-ink/70 hover:bg-ink/5"
