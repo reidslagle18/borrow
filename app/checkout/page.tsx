@@ -203,14 +203,29 @@ function CheckoutInner() {
   const customerMatches = useMemo(() => {
     const q = customerQuery.trim().toLowerCase();
     if (!q) return customers.slice(0, 8);
-    return customers
-      .filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          (c.phone ?? "").replace(/\D/g, "").includes(q.replace(/\D/g, "")) ||
-          (c.email ?? "").toLowerCase().includes(q)
-      )
-      .slice(0, 8);
+    const qDigits = q.replace(/\D/g, "");
+    // Rank by closeness so the best match is first (lower score = closer):
+    // exact name < name prefix < any-word prefix < substring, with phone/email
+    // matches scored similarly. Ties break alphabetically.
+    const scored: { c: Customer; score: number }[] = [];
+    for (const c of customers) {
+      const name = c.name.toLowerCase();
+      const email = (c.email ?? "").toLowerCase();
+      const phone = (c.phone ?? "").replace(/\D/g, "");
+      let score = Infinity;
+      if (name === q) score = 0;
+      else if (name.startsWith(q)) score = 1;
+      else if (name.split(/\s+/).some((w) => w.startsWith(q))) score = 2;
+      else if (name.includes(q)) score = 3;
+      if (qDigits && phone.includes(qDigits)) {
+        score = Math.min(score, phone.startsWith(qDigits) ? 2 : 4);
+      }
+      if (email.startsWith(q)) score = Math.min(score, 2);
+      else if (q && email.includes(q)) score = Math.min(score, 5);
+      if (score !== Infinity) scored.push({ c, score });
+    }
+    scored.sort((a, b) => a.score - b.score || a.c.name.localeCompare(b.c.name));
+    return scored.slice(0, 8).map((s) => s.c);
   }, [customers, customerQuery]);
 
   const subtotal = selected.reduce((s, i) => s + Number(i.rental_price), 0);
@@ -782,6 +797,20 @@ function CheckoutInner() {
               />
               {customerListOpen && (
                 <div className="absolute z-10 mt-1.5 max-h-56 w-full overflow-y-auto rounded-xl border border-ink/10 bg-white shadow-lg">
+                  {/* Pinned at the top so you can add someone in one tap. */}
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setNcName(customerQuery.trim());
+                      setShowNewCustomer(true);
+                      setCustomerListOpen(false);
+                    }}
+                    className="sticky top-0 z-10 block w-full border-b border-ink/10 bg-white px-3.5 py-2.5 text-left text-[15px] font-medium text-ink/70 hover:bg-cream"
+                  >
+                    + Add customer
+                    {customerQuery.trim() ? ` “${customerQuery.trim()}”` : ""}
+                  </button>
                   {customerMatches.map((c) => (
                     <button
                       key={c.id}
@@ -794,19 +823,6 @@ function CheckoutInner() {
                       {c.phone && <span className="text-ink/45"> · {c.phone}</span>}
                     </button>
                   ))}
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      setNcName(customerQuery.trim());
-                      setShowNewCustomer(true);
-                      setCustomerListOpen(false);
-                    }}
-                    className="block w-full border-t border-ink/10 px-3.5 py-2.5 text-left text-[15px] text-ink/60 hover:bg-cream"
-                  >
-                    + New customer
-                    {customerQuery.trim() ? ` “${customerQuery.trim()}”` : ""}
-                  </button>
                 </div>
               )}
             </div>
