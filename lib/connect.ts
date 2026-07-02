@@ -108,9 +108,53 @@ export async function payoutForCompletedRental(rentalId: number): Promise<void> 
     if (inserted.length === 0) return;
     const payoutId = inserted[0].id as number;
 
-    await trySendPayout(payoutId, Number(r.consignor_id), amount, rentalId);
+    await trySendPayout(payoutId, Number(r.consignor_id), amount, `payout_rental_${rentalId}`);
   } catch (err) {
     console.error(`[connect] payoutForCompletedRental(${rentalId}) failed:`, (err as Error).message);
+  }
+}
+
+/**
+ * Total-loss payout: owe the consignor the FULL agreed replacement value when
+ * their piece is lost / damaged beyond repair. Created and owed regardless of
+ * whether we recover the amount from the renter. Idempotent per rental via the
+ * unique loss_rental_id. Distinct from the normal 60% rental payout.
+ */
+export async function createConsignorLossPayout(rentalId: number): Promise<void> {
+  try {
+    const rows = await sql`
+      SELECT r.id, r.replacement_value AS rental_repl, i.ownership, i.consignor_id,
+             i.replacement_value AS item_repl,
+             COALESCE(NULLIF(i.name, ''), i.brand) AS brand
+      FROM rentals r JOIN items i ON i.id = r.item_id
+      WHERE r.id = ${rentalId}
+    `;
+    const r = rows[0];
+    if (!r || r.ownership !== "consignment" || !r.consignor_id) return;
+
+    // Prefer the value recorded on the rental at loss time; fall back to the
+    // piece's current replacement value.
+    const amount = Math.round(
+      Number(r.rental_repl ?? r.item_repl ?? 0) * 100
+    ) / 100;
+    if (amount <= 0) return;
+
+    const inserted = await sql`
+      INSERT INTO payouts (consignor_id, amount, method, status, auto, kind, loss_rental_id, notes)
+      VALUES (${r.consignor_id}, ${amount}, 'stripe', 'pending', true, 'loss', ${rentalId},
+              ${"Replacement (total loss) · " + r.brand})
+      ON CONFLICT (loss_rental_id) DO NOTHING
+      RETURNING id
+    `;
+    if (inserted.length === 0) return; // already created for this loss
+    await trySendPayout(
+      Number(inserted[0].id),
+      Number(r.consignor_id),
+      amount,
+      `payout_loss_${rentalId}`
+    );
+  } catch (err) {
+    console.error(`[connect] createConsignorLossPayout(${rentalId}) failed:`, (err as Error).message);
   }
 }
 
@@ -123,7 +167,7 @@ async function trySendPayout(
   payoutId: number,
   consignorId: number,
   amount: number,
-  rentalId: number
+  idempotencyKey: string
 ): Promise<void> {
   const stripe = getStripe();
   if (!stripe) return;
@@ -139,10 +183,10 @@ async function trySendPayout(
         amount: Math.round(amount * 100),
         currency: "usd",
         destination: c.stripe_account_id,
-        transfer_group: `rental_${rentalId}`,
-        metadata: { rental_id: String(rentalId), consignor_id: String(consignorId), payout_id: String(payoutId) },
+        transfer_group: idempotencyKey,
+        metadata: { consignor_id: String(consignorId), payout_id: String(payoutId) },
       },
-      { idempotencyKey: `payout_rental_${rentalId}` }
+      { idempotencyKey }
     );
     await sql`
       UPDATE payouts
@@ -171,19 +215,25 @@ async function trySendPayout(
 export async function sweepPendingPayouts(consignorId?: number): Promise<{ attempted: number }> {
   const pending = consignorId
     ? await sql`
-        SELECT id, consignor_id, amount, rental_id FROM payouts
-        WHERE status = 'pending' AND auto = true AND rental_id IS NOT NULL
+        SELECT id, consignor_id, amount, kind, rental_id, loss_rental_id FROM payouts
+        WHERE status = 'pending' AND auto = true
+          AND (rental_id IS NOT NULL OR loss_rental_id IS NOT NULL)
           AND consignor_id = ${consignorId}
         ORDER BY id ASC`
     : await sql`
-        SELECT p.id, p.consignor_id, p.amount, p.rental_id FROM payouts p
+        SELECT p.id, p.consignor_id, p.amount, p.kind, p.rental_id, p.loss_rental_id FROM payouts p
         JOIN consignors c ON c.id = p.consignor_id
-        WHERE p.status = 'pending' AND p.auto = true AND p.rental_id IS NOT NULL
+        WHERE p.status = 'pending' AND p.auto = true
+          AND (p.rental_id IS NOT NULL OR p.loss_rental_id IS NOT NULL)
           AND c.payouts_enabled = true
         ORDER BY p.id ASC`;
 
   for (const p of pending) {
-    await trySendPayout(Number(p.id), Number(p.consignor_id), Number(p.amount), Number(p.rental_id));
+    const key =
+      p.kind === "loss"
+        ? `payout_loss_${p.loss_rental_id}`
+        : `payout_rental_${p.rental_id}`;
+    await trySendPayout(Number(p.id), Number(p.consignor_id), Number(p.amount), key);
   }
   return { attempted: pending.length };
 }

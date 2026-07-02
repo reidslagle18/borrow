@@ -242,9 +242,13 @@ export default function PieceDetailPage() {
                 <Section title="Tier & pricing">
                   <Field label="Tier" value={tierLabel(item.tier)} />
                   <Field label="Rental price" value={money(item.rental_price)} />
+                  <Field label="Retail value" value={money(item.retail_value)} />
                   <Field
-                    label="Retail / replacement"
-                    value={money(item.retail_value)}
+                    label="Replacement value"
+                    value={
+                      money(item.replacement_value) +
+                      (item.replacement_value_manual ? " · set" : " · auto")
+                    }
                   />
                 </Section>
 

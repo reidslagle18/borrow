@@ -35,7 +35,12 @@ export interface Item {
   tier: Tier;
   rental_price: number;
   purchase_cost: number | null; // acquisition cost
-  retail_value: number | null; // retail / replacement value
+  retail_value: number | null; // retail value
+  // Agreed loss/replacement value charged if the piece is lost or damaged
+  // beyond repair. Defaults to max(70% of retail, acquisition cost); once
+  // hand-edited, replacement_value_manual stays true and the default is frozen.
+  replacement_value: number | null;
+  replacement_value_manual: boolean;
   acquisition_date: string | null; // YYYY-MM-DD
   source: string | null;
   condition_notes: string | null; // condition / damage notes
@@ -57,6 +62,20 @@ export interface Item {
 export const CONSIGNOR_SHARE = 0.6;
 
 /**
+ * Default agreed replacement value for a piece: the GREATER of 70% of its
+ * retail value or its acquisition cost (whole dollars). For consigned pieces
+ * with no acquisition cost this resolves to 70% of retail.
+ */
+export function replacementDefault(
+  retail: number | null | undefined,
+  cost: number | null | undefined
+): number {
+  const r = Number(retail) || 0;
+  const c = Number(cost) || 0;
+  return Math.max(Math.ceil(r * 0.7), Math.ceil(c));
+}
+
+/**
  * Default Cleaning & Care Fee added to every paying rental, in dollars.
  * The live amount is configurable via the ambassador-program settings
  * (program.cleaning_fee); this is only the fallback default.
@@ -72,6 +91,13 @@ export const AGREEMENT_TERMS = [
   "A Cleaning & Care Fee is added to every paying rental.",
   "The Cleaning & Care Fee covers professional cleaning and standard handling only. It is not damage insurance. The renter is responsible for the cost of repairing or replacing any item that is damaged beyond normal wear, stained beyond cleaning, lost, or not returned, up to the item's full replacement value.",
   "Late returns are charged $15 per piece per day past the due date.",
+  "If an item is not returned, or is returned damaged beyond repair, the renter authorizes Borrow to charge the payment method on file the item's replacement value as recorded at the time of rental. The replacement value reflects the fair value of the item.",
+];
+
+/** Consignor agreement terms — shown when setting up / managing a consignor. */
+export const CONSIGNOR_AGREEMENT_TERMS = [
+  "You earn 60% of the rental price on each completed rental of your pieces; Borrow keeps 40%. The Cleaning & Care Fee and any late fees are retained by Borrow.",
+  "Consigned items are rented to third parties who may damage, stain, or fail to return them, and you accept this risk. Each item is assigned an agreed replacement value at intake. If an item is lost or damaged beyond repair, Borrow will pay you that agreed replacement value on your next scheduled payout, regardless of whether Borrow recovers the amount from the renter. Repairable damage does not trigger a replacement payout; Borrow will repair the item and it remains in your consigned inventory.",
 ];
 
 export interface Transaction {
@@ -267,12 +293,19 @@ export interface Rental {
   late_fee: number;
   damaged: boolean;
   notes: string | null;
+  damage_kind?: "repair" | "loss" | null;
+  repair_cost?: number;
+  replacement_value?: number | null; // snapshot at loss time
+  payment_followup?: boolean;
+  payment_link_url?: string | null;
   // joined fields
   customer_name?: string | null;
   brand?: string;
   size?: string;
   color?: string | null;
   photo_url?: string | null;
+  item_replacement_value?: number | null; // piece's current replacement value
+  ownership?: Ownership;
 }
 
 // Tier prices include the 3.99% card-processing markup, rounded UP to a whole

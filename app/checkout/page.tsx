@@ -744,6 +744,12 @@ function CheckoutInner() {
                       {tierLabel(i.tier)} · {money(Number(i.rental_price))} +{" "}
                       {money(cleaningFee)} cleaning
                     </p>
+                    {i.replacement_value != null && Number(i.replacement_value) > 0 && (
+                      <p className="text-[12px] text-ink/40">
+                        Replacement value {money(Number(i.replacement_value))} if
+                        lost or damaged beyond repair
+                      </p>
+                    )}
                   </div>
                   <button
                     onClick={() =>

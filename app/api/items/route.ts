@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema, nextItemId } from "@/lib/db";
 import { getProgram } from "@/lib/credits";
+import { replacementDefault } from "@/lib/types";
 
 export async function GET() {
   await ensureSchema();
@@ -34,19 +35,26 @@ export async function POST(request: Request) {
     v == null || v === "" ? null : Math.ceil(Number(v));
   const purchaseCost = ceilOrNull(b.purchase_cost);
   const retailValue = ceilOrNull(b.retail_value);
+  // Replacement value: honor a hand-set value when the form marks it manual,
+  // otherwise use the computed default (max of 70% retail, acquisition cost).
+  const replDefault = replacementDefault(retailValue, purchaseCost);
+  const sentRepl = ceilOrNull(b.replacement_value);
+  const replacementManual = b.replacement_value_manual === true && sentRepl != null;
+  const replacement = replacementManual ? (sentRepl as number) : replDefault;
   try {
     const rows = await sql`
       INSERT INTO items (
         id, barcode, name, brand, description, size, color, fabric, fit_notes,
         silhouette, new_with_tags, ambassador_id, tier, rental_price, purchase_cost,
-        retail_value, acquisition_date, source, condition_notes, ownership,
+        retail_value, replacement_value, replacement_value_manual,
+        acquisition_date, source, condition_notes, ownership,
         consignor_id, event_types, status, location, photo_url, photos
       ) VALUES (
         ${id}, ${String(b.barcode).trim()}, ${b.name || null}, ${b.brand}, ${b.description || null},
         ${b.size}, ${b.color || null}, ${b.fabric || null}, ${b.fit_notes || null},
         ${b.silhouette || null}, ${!!b.new_with_tags}, ${b.ambassador_id ?? null},
         ${b.tier}, ${rentalPrice},
-        ${purchaseCost}, ${retailValue},
+        ${purchaseCost}, ${retailValue}, ${replacement}, ${replacementManual},
         ${b.acquisition_date || null}, ${b.source || null},
         ${b.condition_notes || null}, ${b.ownership || "owned"},
         ${b.ownership === "consignment" ? b.consignor_id ?? null : null},

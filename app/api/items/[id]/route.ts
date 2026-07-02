@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { getProgram } from "@/lib/credits";
+import { replacementDefault } from "@/lib/types";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -152,6 +153,13 @@ export async function PATCH(request: Request, ctx: Ctx) {
     v == null || v === "" ? null : Math.ceil(Number(v));
   const purchaseCost = ceilOrNull(b.purchase_cost);
   const retailValue = ceilOrNull(b.retail_value);
+  // Resolve replacement value: honor the form's manual flag (never overwrite a
+  // hand-set value); otherwise recompute the default from the current retail
+  // value / acquisition cost.
+  const replDefault = replacementDefault(retailValue, purchaseCost);
+  const sentRepl = ceilOrNull(b.replacement_value);
+  const replacementManual = b.replacement_value_manual === true && sentRepl != null;
+  const replacement = replacementManual ? (sentRepl as number) : replDefault;
   // Stamp the retirement date when a piece is first moved to retired.
   const retiredAt = b.status === "retired" ? b.retired_at ?? null : null;
 
@@ -174,6 +182,8 @@ export async function PATCH(request: Request, ctx: Ctx) {
         rental_price = ${rentalPrice},
         purchase_cost = ${purchaseCost},
         retail_value = ${retailValue},
+        replacement_value = ${replacement},
+        replacement_value_manual = ${replacementManual},
         acquisition_date = ${b.acquisition_date || null},
         source = ${b.source || null},
         condition_notes = ${b.condition_notes || null},

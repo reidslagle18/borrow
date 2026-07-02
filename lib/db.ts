@@ -87,6 +87,20 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS source TEXT`;
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS acquisition_date DATE`;
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS retail_value NUMERIC(8,2)`;
+  // Agreed loss/replacement value + a flag marking a manual override so the
+  // default (max of 70% retail, acquisition cost) never clobbers a hand-set one.
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS replacement_value NUMERIC(8,2)`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS replacement_value_manual BOOLEAN NOT NULL DEFAULT false`;
+  // Backfill any piece without one from the default formula (one-time; only
+  // touches nulls so manual/edited values are preserved).
+  await sql`
+    UPDATE items
+    SET replacement_value = GREATEST(
+          ceil(COALESCE(retail_value, 0) * 0.7),
+          ceil(COALESCE(purchase_cost, 0))
+        )
+    WHERE replacement_value IS NULL
+  `;
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS cleaning_count INT NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS retired_at DATE`;
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS photos TEXT[] NOT NULL DEFAULT '{}'`;
@@ -167,6 +181,12 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE payouts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'paid'`;
   await sql`ALTER TABLE payouts ADD COLUMN IF NOT EXISTS auto BOOLEAN NOT NULL DEFAULT false`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS payouts_rental_key ON payouts(rental_id) WHERE rental_id IS NOT NULL`;
+  // Total-loss payouts: the FULL agreed replacement value owed to a consignor
+  // when their piece is lost/destroyed. kind distinguishes them from normal 60%
+  // rental payouts; loss_rental_id is UNIQUE so a loss pays out only once.
+  await sql`ALTER TABLE payouts ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'rental'`;
+  await sql`ALTER TABLE payouts ADD COLUMN IF NOT EXISTS loss_rental_id INT REFERENCES rentals(id) ON DELETE SET NULL`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS payouts_loss_rental_key ON payouts(loss_rental_id) WHERE loss_rental_id IS NOT NULL`;
 
   // A checkout = one transaction covering one or more pieces for a customer.
   // Each piece also gets its own rental row (below) linked back via
@@ -347,6 +367,11 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS replacement_charged BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS payment_followup BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS payment_link_url TEXT`;
+  // Return-time issue handling: 'repair' (repairable, charge actual repair cost)
+  // or 'loss' (total loss / not returned, charge replacement value + retire).
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS damage_kind TEXT`;
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS repair_cost NUMERIC(10,2) NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS replacement_value NUMERIC(10,2)`;
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS paid BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS stripe_session_id TEXT`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS rentals_stripe_session_key ON rentals(stripe_session_id) WHERE stripe_session_id IS NOT NULL`;
@@ -363,6 +388,10 @@ async function createSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+  // Allow 'repair' charges (repairable damage — actual repair cost).
+  await sql`ALTER TABLE customer_charges DROP CONSTRAINT IF EXISTS customer_charges_kind_check`;
+  await sql`ALTER TABLE customer_charges ADD CONSTRAINT customer_charges_kind_check
+    CHECK (kind IN ('late_fee','replacement','repair'))`;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */

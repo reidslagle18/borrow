@@ -9,6 +9,7 @@ import {
   ConsignorCharge,
   statusLabel,
   ItemStatus,
+  CONSIGNOR_AGREEMENT_TERMS,
 } from "@/lib/types";
 import { fmtShort, dateOnly } from "@/lib/dates";
 
@@ -612,6 +613,18 @@ function DetailModal({
                 </div>
               </>
             )}
+
+            {/* Consignor agreement */}
+            <details className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-4">
+              <summary className="cursor-pointer text-xl font-medium">
+                Consignor agreement
+              </summary>
+              <ul className="mt-3 list-disc space-y-2 pl-5 text-[13px] leading-relaxed text-ink/60">
+                {CONSIGNOR_AGREEMENT_TERMS.map((t) => (
+                  <li key={t}>{t}</li>
+                ))}
+              </ul>
+            </details>
           </>
         )}
       </div>

@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { sendConsignorRentedEmail } from "@/lib/email";
 import { CONSIGNOR_SHARE } from "@/lib/types";
-import { payoutForCompletedRental } from "@/lib/connect";
+import { payoutForCompletedRental, createConsignorLossPayout } from "@/lib/connect";
+import { chargeRenterForRental } from "@/lib/charges";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -85,8 +86,25 @@ export async function PATCH(request: Request, ctx: Ctx) {
       b.late_fee != null && b.late_fee !== ""
         ? Math.max(0, Number(b.late_fee))
         : daysLate * 15;
-    const damaged = !!b.damaged;
+    // Issue type: repairable damage, total loss / not returned, or none.
+    const damageKind: "repair" | "loss" | null =
+      b.damage_kind === "repair" || b.damage_kind === "loss" ? b.damage_kind : null;
+    const damaged = damageKind !== null || !!b.damaged;
     const damageNote: string = (b.damage_note || "").trim();
+    const origin = new URL(request.url).origin;
+
+    const it = (
+      await sql`
+        SELECT id, ownership, consignor_id, replacement_value,
+               COALESCE(NULLIF(name, ''), brand) AS brand
+        FROM items WHERE id = ${rental.item_id}
+      `
+    )[0];
+    const replacementValue = it?.replacement_value != null ? Number(it.replacement_value) : 0;
+    const repairCost =
+      damageKind === "repair" && b.repair_cost != null && b.repair_cost !== ""
+        ? Math.max(0, Number(b.repair_cost))
+        : 0;
 
     await sql`
       UPDATE rentals SET
@@ -94,6 +112,9 @@ export async function PATCH(request: Request, ctx: Ctx) {
         returned_date = ${returnedDate},
         late_fee = ${lateFee},
         damaged = ${damaged},
+        damage_kind = ${damageKind},
+        repair_cost = ${repairCost},
+        replacement_value = ${damageKind === "loss" ? replacementValue : null},
         notes = ${
           damageNote
             ? (rental.notes ? rental.notes + " · " : "") + "Damage: " + damageNote
@@ -102,23 +123,65 @@ export async function PATCH(request: Request, ctx: Ctx) {
         updated_at = now()
       WHERE id = ${id}
     `;
-    // Every return goes through cleaning before it's back on the rack
-    await sql`
-      UPDATE items SET status = 'cleaning', updated_at = now()
-      WHERE id = ${rental.item_id}
-    `;
-    if (damaged && damageNote) {
+
+    if (damageKind === "loss") {
+      // Total loss / not returned → retire the piece out of inventory.
       await sql`
         UPDATE items SET
+          status = 'retired',
+          retired_at = ${returnedDate},
           condition_notes = COALESCE(condition_notes || E'\n', '') ||
-            '[' || ${returnedDate} || '] Damage: ' || ${damageNote},
+            '[' || ${returnedDate} || '] Total loss / not returned' ||
+            ${damageNote ? " · " + damageNote : ""},
           updated_at = now()
         WHERE id = ${rental.item_id}
       `;
+    } else {
+      // Normal return or repairable damage → cleaning/repair; stays in stock.
+      await sql`
+        UPDATE items SET status = 'cleaning', updated_at = now()
+        WHERE id = ${rental.item_id}
+      `;
+      if (damaged && damageNote) {
+        await sql`
+          UPDATE items SET
+            condition_notes = COALESCE(condition_notes || E'\n', '') ||
+              '[' || ${returnedDate} || '] ' ||
+              ${(damageKind === "repair" ? "Repair" : "Damage") + ": " + damageNote},
+            updated_at = now()
+          WHERE id = ${rental.item_id}
+        `;
+      }
     }
-    // The rental is complete — auto-pay the consignor their share via Stripe
-    // Connect (no-op for owned/ambassador stock; queues if not yet onboarded).
-    // Best-effort: never blocks the check-in.
+
+    // GUARANTEE the consignor's full-replacement payout first — created and owed
+    // regardless of whether we can collect from the renter.
+    if (damageKind === "loss" && it?.ownership === "consignment" && it?.consignor_id) {
+      await createConsignorLossPayout(Number(id));
+    }
+
+    // Charge the renter's saved card off-session (best-effort; on failure it's
+    // flagged for follow-up with a payment link, and the consignor is still paid).
+    if (damageKind === "repair" && repairCost > 0) {
+      await chargeRenterForRental({
+        rentalId: Number(id),
+        amount: repairCost,
+        kind: "repair",
+        description: `Repair — ${it?.brand ?? "rental"}`,
+        origin,
+      });
+    } else if (damageKind === "loss" && replacementValue > 0) {
+      await chargeRenterForRental({
+        rentalId: Number(id),
+        amount: replacementValue,
+        kind: "replacement",
+        description: `Replacement — ${it?.brand ?? "rental"}`,
+        origin,
+      });
+    }
+
+    // Normal consignor 60% earnings on the completed rental (no-op for
+    // owned/ambassador stock; queues if the consignor isn't onboarded yet).
     await payoutForCompletedRental(Number(id));
   } else if (b.action === "cancel") {
     if (rental.status === "completed") {

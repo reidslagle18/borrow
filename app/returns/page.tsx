@@ -42,11 +42,16 @@ function CheckInModal({
 }) {
   const due = dateOnly(rental.due_date);
   const [returnedDate, setReturnedDate] = useState(todayISO());
-  const [damaged, setDamaged] = useState(false);
+  const [issue, setIssue] = useState<"none" | "repair" | "loss">("none");
+  const [repairCost, setRepairCost] = useState("");
   const [damageNote, setDamageNote] = useState("");
   const [feeOverride, setFeeOverride] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  const replacementValue = Number(rental.item_replacement_value ?? 0);
+  const isConsigned = rental.ownership === "consignment";
+  const fmtMoney = (n: number) => `$${n % 1 === 0 ? n : n.toFixed(2)}`;
 
   const late = daysLate(due, returnedDate);
   const autoFee = late * 15;
@@ -61,8 +66,9 @@ function CheckInModal({
       body: JSON.stringify({
         action: "return",
         returned_date: returnedDate,
-        damaged,
-        damage_note: damaged ? damageNote : "",
+        damage_kind: issue === "none" ? undefined : issue,
+        repair_cost: issue === "repair" ? Number(repairCost || 0) : undefined,
+        damage_note: issue === "none" ? "" : damageNote,
         late_fee: feeOverride !== null ? Number(feeOverride || 0) : undefined,
       }),
     });
@@ -160,24 +166,88 @@ function CheckInModal({
           </div>
 
           <div>
-            <button
-              type="button"
-              onClick={() => setDamaged(!damaged)}
-              className={`w-full rounded-xl border px-3.5 py-2.5 text-[15px] ${
-                damaged
-                  ? "border-blush-deep bg-blush text-ink"
-                  : "border-ink/15 bg-white text-ink/60"
-              }`}
-            >
-              {damaged ? "Flagged as damaged" : "Flag as damaged"}
-            </button>
-            {damaged && (
-              <textarea
-                className={`${inputCls} mt-2 min-h-20`}
-                placeholder="What happened? (stain on hem, broken zipper…)"
-                value={damageNote}
-                onChange={(e) => setDamageNote(e.target.value)}
-              />
+            <label className={labelCls}>Condition</label>
+            <div className="grid grid-cols-3 gap-2">
+              {(
+                [
+                  { v: "none", label: "No issue" },
+                  { v: "repair", label: "Repairable" },
+                  { v: "loss", label: "Total loss" },
+                ] as const
+              ).map((o) => (
+                <button
+                  key={o.v}
+                  type="button"
+                  onClick={() => setIssue(o.v)}
+                  className={`rounded-xl border px-2 py-2.5 text-[14px] ${
+                    issue === o.v
+                      ? o.v === "loss"
+                        ? "border-blush-deep bg-blush text-ink"
+                        : "border-ink bg-ink text-cream"
+                      : "border-ink/15 bg-white text-ink/60"
+                  }`}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+
+            {issue === "repair" && (
+              <div className="mt-3 space-y-2 rounded-2xl bg-butter/30 p-3.5">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs uppercase tracking-[0.15em] text-ink/50">
+                    Repair cost $
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    className="w-28 rounded-xl border border-ink/15 bg-white px-3 py-1.5 text-[15px] outline-none"
+                    value={repairCost}
+                    onChange={(e) => setRepairCost(e.target.value)}
+                    placeholder="0"
+                  />
+                </div>
+                <p className="text-[12px] text-ink/55">
+                  Charged to the renter&apos;s card on file. The piece goes to
+                  cleaning/repair and stays in inventory. Consignor is not charged
+                  and keeps their normal earnings.
+                </p>
+                <textarea
+                  className={`${inputCls} min-h-16`}
+                  placeholder="What needs repair? (broken zipper, hem…)"
+                  value={damageNote}
+                  onChange={(e) => setDamageNote(e.target.value)}
+                />
+              </div>
+            )}
+
+            {issue === "loss" && (
+              <div className="mt-3 space-y-2 rounded-2xl bg-blush/25 p-3.5">
+                <p className="text-[15px]">
+                  Charge renter{" "}
+                  <span className="font-semibold">{fmtMoney(replacementValue)}</span>{" "}
+                  (replacement value) and retire the piece.
+                </p>
+                <p className="text-[12px] text-ink/60">
+                  {isConsigned
+                    ? `This piece is consigned — the consignor is paid the full ${fmtMoney(
+                        replacementValue
+                      )} on their next payout, guaranteed even if the renter's charge fails.`
+                    : "Owned piece — no consignor payout."}
+                </p>
+                {replacementValue <= 0 && (
+                  <p className="text-[12px] text-blush-deep">
+                    No replacement value is set on this piece — set one on the
+                    piece first so the renter can be charged.
+                  </p>
+                )}
+                <textarea
+                  className={`${inputCls} min-h-16`}
+                  placeholder="What happened? (not returned, destroyed…)"
+                  value={damageNote}
+                  onChange={(e) => setDamageNote(e.target.value)}
+                />
+              </div>
             )}
           </div>
 
@@ -185,10 +255,16 @@ function CheckInModal({
 
           <button
             onClick={submit}
-            disabled={saving}
+            disabled={saving || (issue === "loss" && replacementValue <= 0)}
             className="w-full rounded-full bg-ink px-6 py-3.5 text-base text-cream transition-opacity disabled:opacity-40"
           >
-            {saving ? "Checking in…" : "Complete check-in → cleaning"}
+            {saving
+              ? "Working…"
+              : issue === "loss"
+                ? `Record loss & charge ${fmtMoney(replacementValue)}`
+                : issue === "repair"
+                  ? "Charge repair & check in"
+                  : "Complete check-in → cleaning"}
           </button>
         </div>
       </div>
@@ -248,9 +324,11 @@ export default function ReturnsPage() {
     setChecking(null);
     setRentals((prev) => prev.filter((r) => r.id !== updated.id));
     setRecent((prev) => [updated, ...prev].slice(0, 10));
+    // A total loss retires the piece; anything else goes to cleaning.
+    const newStatus = updated.damage_kind === "loss" ? "retired" : "cleaning";
     setItems((prev) =>
       prev.map((i) =>
-        i.id === updated.item_id ? { ...i, status: "cleaning" } : i
+        i.id === updated.item_id ? { ...i, status: newStatus } : i
       )
     );
   }
@@ -412,10 +490,33 @@ export default function ReturnsPage() {
                             : ""}
                           {Number(r.late_fee) > 0 &&
                             ` · $${Number(r.late_fee)} late fee`}
-                          {r.damaged && " · damaged"}
+                          {r.damage_kind === "loss"
+                            ? " · total loss"
+                            : r.damaged
+                              ? " · damaged"
+                              : ""}
                         </p>
+                        {r.payment_followup && (
+                          <p className="mt-1 flex items-center gap-2 text-[12px] text-blush-deep">
+                            Replacement uncollected — renter charge failed.
+                            {r.payment_link_url && (
+                              <button
+                                onClick={() =>
+                                  navigator.clipboard?.writeText(r.payment_link_url!)
+                                }
+                                className="rounded-full border border-blush-deep px-2 py-0.5 text-[11px]"
+                              >
+                                Copy pay link
+                              </button>
+                            )}
+                          </p>
+                        )}
                       </div>
-                      {r.damaged ? (
+                      {r.damage_kind === "loss" ? (
+                        <span className="shrink-0 rounded-full bg-blush-deep px-2.5 py-1 text-[11px] text-cream">
+                          total loss
+                        </span>
+                      ) : r.damaged ? (
                         <span className="shrink-0 rounded-full bg-blush px-2.5 py-1 text-[11px]">
                           damaged
                         </span>

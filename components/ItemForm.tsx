@@ -18,6 +18,7 @@ import {
   OWNERSHIPS,
   SILHOUETTES,
   COLORS,
+  replacementDefault,
 } from "@/lib/types";
 
 /** Downscale a photo client-side so iPad camera shots upload fast. */
@@ -92,6 +93,14 @@ export default function ItemForm({
   const [retailValue, setRetailValue] = useState<string>(
     item?.retail_value != null ? String(item.retail_value) : ""
   );
+  // Agreed replacement/loss value. Auto-follows the default (max of 70% retail,
+  // acquisition cost) until hand-edited, after which it's frozen (manual).
+  const [replacementValue, setReplacementValue] = useState<string>(
+    item?.replacement_value != null ? String(item.replacement_value) : ""
+  );
+  const [replacementManual, setReplacementManual] = useState(
+    item?.replacement_value_manual ?? false
+  );
   const [acquisitionDate, setAcquisitionDate] = useState(
     item?.acquisition_date ?? ""
   );
@@ -137,6 +146,17 @@ export default function ItemForm({
   const fileRef = useRef<HTMLInputElement>(null);
   const barcodeRef = useRef<HTMLInputElement>(null);
   const [scanOpen, setScanOpen] = useState(false);
+
+  // Keep replacement value following the default until it's hand-edited.
+  const replDefault = replacementDefault(
+    retailValue === "" ? 0 : Number(retailValue),
+    purchaseCost === "" ? 0 : Number(purchaseCost)
+  );
+  useEffect(() => {
+    if (!replacementManual) {
+      setReplacementValue(replDefault > 0 ? String(replDefault) : "");
+    }
+  }, [replDefault, replacementManual]);
 
   // Focus the Barcode field as soon as the modal opens so a handheld scan
   // (keyboard wedge) lands straight in it — no need to tap the field first.
@@ -283,6 +303,8 @@ export default function ItemForm({
       rental_price: Number(rentalPrice),
       purchase_cost: purchaseCost === "" ? null : Number(purchaseCost),
       retail_value: retailValue === "" ? null : Number(retailValue),
+      replacement_value: replacementValue === "" ? null : Number(replacementValue),
+      replacement_value_manual: replacementManual,
       acquisition_date: acquisitionDate || null,
       source: source.trim(),
       ambassador_id: ambassadorId === "" ? null : ambassadorId,
@@ -669,6 +691,43 @@ export default function ItemForm({
                   placeholder="—"
                 />
               </div>
+            </div>
+
+            <div>
+              <label className={labelCls}>
+                Replacement value ($)
+                {!replacementManual && (
+                  <span className="ml-1 normal-case tracking-normal text-ink/35">· auto</span>
+                )}
+              </label>
+              <input
+                type="number"
+                inputMode="decimal"
+                className={inputCls}
+                value={replacementValue}
+                onChange={(e) => {
+                  setReplacementValue(e.target.value);
+                  setReplacementManual(true);
+                }}
+                placeholder="—"
+              />
+              <p className="mt-1 text-[12px] text-ink/45">
+                {replacementManual ? (
+                  <>
+                    Manually set — charged if the piece is lost or damaged beyond
+                    repair.{" "}
+                    <button
+                      type="button"
+                      onClick={() => setReplacementManual(false)}
+                      className="underline underline-offset-2"
+                    >
+                      use auto
+                    </button>
+                  </>
+                ) : (
+                  "Auto: greater of 70% of retail or acquisition cost. Charged if the piece is lost or damaged beyond repair."
+                )}
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
