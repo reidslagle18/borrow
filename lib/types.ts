@@ -324,6 +324,7 @@ export const EVENT_TYPES = [
   "Game Day",
   "Graduation",
   "Wedding Guest",
+  "Bridal",
   "Semi-Formal",
   "Night Out",
 ];
