@@ -32,13 +32,12 @@ export async function GET(_req: Request, ctx: Ctx) {
     ORDER BY charged_on DESC, id DESC
   `;
 
-  const revenue = items.reduce((s, i) => s + Number(i.revenue), 0);
-  const earned = Math.round(revenue * CONSIGNOR_SHARE * 100) / 100;
-  // Only money actually sent counts as paid; queued auto-payouts are still owed.
+  // Payouts accrue as ledger rows: 'pending' = owed (rental 60% + replacement),
+  // anything else = already sent. Owed-now is the sum of pending rows.
   const paid = payouts
     .filter((p) => p.status !== "pending")
     .reduce((s, p) => s + Number(p.amount), 0);
-  const pendingPayouts = payouts
+  const owed = payouts
     .filter((p) => p.status === "pending")
     .reduce((s, p) => s + Number(p.amount), 0);
   const charged = charges.reduce((s, c) => s + Number(c.amount), 0);
@@ -51,11 +50,10 @@ export async function GET(_req: Request, ctx: Ctx) {
     })),
     payouts,
     charges,
-    earned,
+    earned: Math.round((owed + paid) * 100) / 100, // total credited to date
     paid,
-    pending_payouts: pendingPayouts,
+    owed,
     cleaning_charges: charged,
-    owed: Math.max(0, earned - charged - paid),
   });
 }
 

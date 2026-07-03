@@ -33,7 +33,6 @@ type ConsignorDetail = ConsignorRow & {
   cleaning_charges: number;
   stripe_account_id: string | null;
   payouts_enabled: boolean;
-  pending_payouts: number;
 };
 
 const STATUS_BADGE: Record<ItemStatus, string> = {
@@ -62,9 +61,8 @@ function ConsignorForm({
   const [name, setName] = useState(consignor?.name ?? "");
   const [phone, setPhone] = useState(consignor?.phone ?? "");
   const [email, setEmail] = useState(consignor?.email ?? "");
-  const [venmo, setVenmo] = useState(consignor?.venmo ?? "");
-  const [payoutBackup, setPayoutBackup] = useState(consignor?.payout_backup ?? "");
   const [notes, setNotes] = useState(consignor?.notes ?? "");
+  const [sendWelcome, setSendWelcome] = useState(true); // new consignors only
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -83,9 +81,8 @@ function ConsignorForm({
           name: name.trim(),
           phone: phone.trim(),
           email: email.trim(),
-          venmo: venmo.trim(),
-          payout_backup: payoutBackup.trim(),
           notes: notes.trim(),
+          send_welcome: !consignor && sendWelcome,
         }),
       }
     );
@@ -123,17 +120,24 @@ function ConsignorForm({
             <input className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div>
-            <label className={labelCls}>Venmo (for payouts)</label>
-            <input className={inputCls} value={venmo} onChange={(e) => setVenmo(e.target.value)} placeholder="@their-venmo" />
-          </div>
-          <div>
-            <label className={labelCls}>Backup payout (if no Venmo)</label>
-            <input className={inputCls} value={payoutBackup} onChange={(e) => setPayoutBackup(e.target.value)} placeholder="Zelle, PayPal, Cash App, check…" />
-          </div>
-          <div>
             <label className={labelCls}>Notes</label>
             <input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Drop-off habits, anything useful…" />
           </div>
+          {!consignor && (
+            <label className="flex items-start gap-2.5 rounded-2xl bg-lavender/25 px-3.5 py-3 text-[14px]">
+              <input
+                type="checkbox"
+                checked={sendWelcome}
+                onChange={(e) => setSendWelcome(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-ink"
+              />
+              <span className="text-ink/70">
+                Email a welcome — their portal link (to see pieces, earnings &amp;
+                payout status) plus a secure link to set up direct deposit.
+                {" "}Needs an email above.
+              </span>
+            </label>
+          )}
         </div>
         {error && <p className="mt-3 text-sm text-blush-deep">{error}</p>}
         <div className="mt-5 flex gap-2">
@@ -164,9 +168,10 @@ function DetailModal({
 }) {
   const [detail, setDetail] = useState<ConsignorDetail | null>(null);
   const [editOpen, setEditOpen] = useState(false);
-  const [payAmount, setPayAmount] = useState("");
-  const [payMethod, setPayMethod] = useState("Venmo");
-  const [paySaving, setPaySaving] = useState(false);
+  const [paying, setPaying] = useState(false);
+  const [payMsg, setPayMsg] = useState("");
+  const [welcomeBusy, setWelcomeBusy] = useState(false);
+  const [welcomeMsg, setWelcomeMsg] = useState("");
   const [busyItem, setBusyItem] = useState<string | null>(null);
   const [confirmReturn, setConfirmReturn] = useState<string | null>(null);
   const [dryClean, setDryClean] = useState(false);
@@ -205,30 +210,42 @@ function DetailModal({
 
   async function load() {
     const res = await fetch(`/api/consignors/${id}`);
-    if (res.ok) {
-      const d = await res.json();
-      setDetail(d);
-      setPayAmount(d.owed > 0 ? String(d.owed) : "");
-    }
+    if (res.ok) setDetail(await res.json());
   }
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  async function recordPayout() {
-    if (!payAmount || Number(payAmount) <= 0) return;
-    setPaySaving(true);
-    const res = await fetch(`/api/consignors/${id}/payouts`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amount: Number(payAmount), method: payMethod }),
-    });
+  // One action: release everything owed to their Stripe connected account.
+  async function payNow() {
+    setPaying(true);
+    setPayMsg("");
+    const res = await fetch(`/api/consignors/${id}/pay`, { method: "POST" });
+    const d = await res.json().catch(() => ({}));
     if (res.ok) {
       await load();
       onChanged();
+      setPayMsg("Payout sent to their bank.");
+    } else {
+      setPayMsg(d.error || "Couldn't pay — try again.");
     }
-    setPaySaving(false);
+    setPaying(false);
+  }
+
+  async function sendWelcome() {
+    setWelcomeBusy(true);
+    setWelcomeMsg("");
+    const res = await fetch(`/api/consignors/${id}/welcome`, { method: "POST" });
+    const d = await res.json().catch(() => ({}));
+    setWelcomeMsg(
+      res.ok
+        ? d.sent
+          ? "Welcome sent — portal + direct-deposit links included."
+          : "Couldn't send (add an email, or email isn't configured)."
+        : d.error || "Couldn't send."
+    );
+    setWelcomeBusy(false);
   }
 
   async function consignorAction(itemId: string, action: string) {
@@ -366,106 +383,89 @@ function DetailModal({
             {/* Direct deposit (Stripe Connect) */}
             <div className="mt-4 rounded-2xl bg-white p-4">
               <div className="flex items-center justify-between">
-                <p className={`${labelCls} mb-0`}>Direct deposit · automatic payouts</p>
+                <p className={`${labelCls} mb-0`}>Direct deposit</p>
                 {detail.payouts_enabled ? (
-                  <span className="rounded-full bg-sage px-2.5 py-1 text-[11px]">Active</span>
+                  <span className="rounded-full bg-sage px-2.5 py-1 text-[11px]">Set up ✓</span>
                 ) : detail.stripe_account_id ? (
-                  <span className="rounded-full bg-butter px-2.5 py-1 text-[11px]">Setup started</span>
+                  <span className="rounded-full bg-butter px-2.5 py-1 text-[11px]">Onboarding pending</span>
                 ) : (
-                  <span className="rounded-full bg-ink/10 px-2.5 py-1 text-[11px] text-ink/60">Not set up</span>
+                  <span className="rounded-full bg-ink/10 px-2.5 py-1 text-[11px] text-ink/60">Not started</span>
                 )}
               </div>
-              {detail.payouts_enabled ? (
-                <p className="mt-1.5 text-[13px] text-ink/55">
-                  Their 60% is sent to their bank automatically when one of their
-                  pieces is returned.
-                </p>
-              ) : (
-                <p className="mt-1.5 text-[13px] text-ink/55">
-                  Send them a secure link to add their bank &amp; ID. Until they
-                  finish, their payouts are queued
-                  {detail.pending_payouts > 0
-                    ? ` — ${money(detail.pending_payouts)} waiting`
-                    : ""}{" "}
-                  and sent automatically once they&apos;re set up.
-                </p>
-              )}
-              {!detail.payouts_enabled &&
-                (connectUrl ? (
-                  <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <p className="mt-1.5 text-[13px] text-ink/55">
+                {detail.payouts_enabled
+                  ? "Bank added & verified — you can pay them directly below."
+                  : "They add their bank & verify identity through Stripe. Earnings still accrue below; they just can't be paid until this is done."}
+              </p>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={sendWelcome}
+                  disabled={welcomeBusy}
+                  className="rounded-full border border-ink/15 px-4 py-2 text-[13px] text-ink/70 disabled:opacity-40"
+                >
+                  {welcomeBusy ? "Sending…" : "Send welcome / invite"}
+                </button>
+                {!detail.payouts_enabled &&
+                  (connectUrl ? (
+                    <>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard?.writeText(connectUrl);
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 1500);
+                        }}
+                        className="rounded-full bg-ink px-4 py-2 text-[13px] text-cream"
+                      >
+                        {copied ? "Copied ✓" : "Copy setup link"}
+                      </button>
+                      <a
+                        href={connectUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-full border border-ink/15 px-4 py-2 text-[13px] text-ink/60"
+                      >
+                        Open
+                      </a>
+                    </>
+                  ) : (
                     <button
-                      onClick={() => {
-                        navigator.clipboard?.writeText(connectUrl);
-                        setCopied(true);
-                        setTimeout(() => setCopied(false), 1500);
-                      }}
-                      className="rounded-full bg-ink px-4 py-2 text-[13px] text-cream"
+                      onClick={getConnectLink}
+                      disabled={connectBusy}
+                      className="rounded-full border border-ink/15 px-4 py-2 text-[13px] text-ink/70 disabled:opacity-40"
                     >
-                      {copied ? "Copied ✓" : "Copy link to send them"}
+                      {connectBusy ? "Creating link…" : "Get setup link"}
                     </button>
-                    <a
-                      href={connectUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded-full border border-ink/15 px-4 py-2 text-[13px] text-ink/60"
-                    >
-                      Open now
-                    </a>
-                    <span className="text-[12px] text-ink/40">Link expires in a few minutes.</span>
-                  </div>
-                ) : (
-                  <button
-                    onClick={getConnectLink}
-                    disabled={connectBusy}
-                    className="mt-2.5 rounded-full border border-ink/15 px-4 py-2 text-[13px] text-ink/70 disabled:opacity-40"
-                  >
-                    {connectBusy ? "Creating link…" : "Get direct-deposit link"}
-                  </button>
-                ))}
+                  ))}
+              </div>
+              {welcomeMsg && <p className="mt-2 text-[13px] text-ink/60">{welcomeMsg}</p>}
               {connectMsg && <p className="mt-2 text-[13px] text-blush-deep">{connectMsg}</p>}
             </div>
 
-            {/* Record payout */}
+            {/* Pay out (one action) */}
             <div className="mt-4 rounded-2xl bg-lavender/25 p-4">
-              <p className={labelCls}>Record payout</p>
-              {(detail.venmo || detail.payout_backup) && (
-                <p className="mb-2 text-[13px] text-ink/60">
-                  Pay to:{" "}
-                  {detail.venmo && (
-                    <span className="font-medium">Venmo {detail.venmo}</span>
-                  )}
-                  {detail.venmo && detail.payout_backup && " · "}
-                  {detail.payout_backup && (
-                    <span>{detail.venmo ? "backup: " : ""}{detail.payout_backup}</span>
-                  )}
-                </p>
-              )}
-              <div className="flex flex-wrap gap-2">
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  className="w-28 rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-[15px] outline-none"
-                  placeholder="$"
-                  value={payAmount}
-                  onChange={(e) => setPayAmount(e.target.value)}
-                />
-                <select
-                  className="rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-[15px] outline-none"
-                  value={payMethod}
-                  onChange={(e) => setPayMethod(e.target.value)}
-                >
-                  {["Venmo", "Zelle", "Cash", "Check", "Other"].map((m) => (
-                    <option key={m}>{m}</option>
-                  ))}
-                </select>
-                <button
-                  onClick={recordPayout}
-                  disabled={paySaving || !payAmount || Number(payAmount) <= 0}
-                  className="rounded-full bg-ink px-5 py-2.5 text-[15px] text-cream disabled:opacity-40"
-                >
-                  {paySaving ? "Saving…" : "Mark paid"}
-                </button>
+              <div className="flex items-center justify-between">
+                <p className={`${labelCls} mb-0`}>Pay out</p>
+                <span className="text-[15px] font-semibold">{money(detail.owed)} owed</span>
               </div>
+              {detail.owed > 0 ? (
+                detail.payouts_enabled ? (
+                  <button
+                    onClick={payNow}
+                    disabled={paying}
+                    className="mt-3 w-full rounded-full bg-ink px-5 py-3 text-[15px] text-cream disabled:opacity-40"
+                  >
+                    {paying ? "Sending…" : `Pay ${money(detail.owed)} to their bank`}
+                  </button>
+                ) : (
+                  <p className="mt-2 rounded-xl bg-butter/50 px-3.5 py-2.5 text-[13px] text-ink/70">
+                    {money(detail.owed)} is owed and accruing, but they can&apos;t
+                    be paid until they finish direct-deposit setup above.
+                  </p>
+                )
+              ) : (
+                <p className="mt-2 text-[13px] text-ink/50">All paid up.</p>
+              )}
+              {payMsg && <p className="mt-2 text-[13px] text-sage-deep">{payMsg}</p>}
             </div>
 
             {/* Pieces */}

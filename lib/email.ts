@@ -272,6 +272,46 @@ export interface PayoutNoticeData {
   method: string | null;
 }
 
+export interface ConsignorWelcomeData {
+  to: string;
+  consignorName: string;
+  portalCode: string | null;
+  onboardingUrl: string | null;
+}
+
+/**
+ * Welcomes a newly-added consignor: a passwordless magic link to their portal
+ * (their contact info is their login) plus a secure Stripe link to set up
+ * direct deposit so they can be paid.
+ */
+export async function sendConsignorWelcome(d: ConsignorWelcomeData) {
+  const first = d.consignorName.split(" ")[0] || "there";
+  const portalLink = d.portalCode
+    ? `${PORTAL_URL}?code=${encodeURIComponent(d.portalCode)}`
+    : PORTAL_URL;
+  return sendEmail(
+    d.to,
+    "Welcome to BORROW — your consignor account",
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">You're in</p>
+      <p style="font-size:16px;">Hi ${first}, your BORROW consignor account is ready. From your portal you can see your pieces, your earnings, and your payout status — no password needed, just use your personal link.</p>
+      <p style="margin:24px 0;"><a href="${portalLink}" style="background:#1a1a1a;color:#f7f4ef;text-decoration:none;padding:12px 22px;border-radius:999px;font-family:Helvetica,Arial,sans-serif;font-size:14px;">Open my portal</a></p>
+      ${
+        d.onboardingUrl
+          ? `<p style="font-family:Helvetica,Arial,sans-serif;font-size:15px;">To get paid, set up direct deposit — add your bank and verify your identity, handled securely by Stripe:</p>
+             <p style="margin:16px 0;"><a href="${d.onboardingUrl}" style="background:#1a1a1a;color:#f7f4ef;text-decoration:none;padding:12px 22px;border-radius:999px;font-family:Helvetica,Arial,sans-serif;font-size:14px;">Set up direct deposit</a></p>
+             <p style="font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#888;">If that link expires, you can start it again anytime from your portal.</p>`
+          : ""
+      }
+      ${
+        d.portalCode
+          ? `<p style="font-family:Helvetica,Arial,sans-serif;font-size:13px;color:#888;">Your access code: <strong style="font-family:monospace;">${d.portalCode}</strong></p>`
+          : ""
+      }
+    `)
+  );
+}
+
 /** Notifies a consignor that BORROW has sent them a payout. */
 export async function sendPayoutNotice(d: PayoutNoticeData) {
   const first = d.consignorName.split(" ")[0] || "there";

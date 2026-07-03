@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { getStripe } from "@/lib/stripe";
 import { fulfillReservation } from "@/lib/bookings";
-import { sweepPendingPayouts } from "@/lib/connect";
 import type Stripe from "stripe";
 
 // Stripe calls this unauthenticated; it's verified by signature instead.
@@ -39,14 +38,12 @@ export async function POST(request: Request) {
       const acct = event.data.object as Stripe.Account;
       const ready =
         !!acct.payouts_enabled && acct.capabilities?.transfers === "active";
-      const rows = await sql`
+      await sql`
         UPDATE consignors SET payouts_enabled = ${ready}
         WHERE stripe_account_id = ${acct.id}
-        RETURNING id
       `;
-      if (ready && rows.length > 0) {
-        await sweepPendingPayouts(Number(rows[0].id));
-      }
+      // Earnings accrue in the ledger; the owner releases them with one action
+      // in the studio, so we don't auto-transfer on onboarding completion.
     }
     // Phase 2 will add: payment_intent.succeeded / payment_intent.payment_failed
     // for the off-session late-fee + replacement charges.

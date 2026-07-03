@@ -105,10 +105,9 @@ export async function payoutForCompletedRental(rentalId: number): Promise<void> 
       ON CONFLICT (rental_id) DO NOTHING
       RETURNING id
     `;
-    if (inserted.length === 0) return;
-    const payoutId = inserted[0].id as number;
-
-    await trySendPayout(payoutId, Number(r.consignor_id), amount, `payout_rental_${rentalId}`);
+    // Row created as 'pending' — it accrues in the consignor's ledger. Payout
+    // happens later when the owner pays the balance in one action (or on the
+    // consignor's schedule); we don't auto-transfer here.
   } catch (err) {
     console.error(`[connect] payoutForCompletedRental(${rentalId}) failed:`, (err as Error).message);
   }
@@ -146,13 +145,8 @@ export async function createConsignorLossPayout(rentalId: number): Promise<void>
       ON CONFLICT (loss_rental_id) DO NOTHING
       RETURNING id
     `;
-    if (inserted.length === 0) return; // already created for this loss
-    await trySendPayout(
-      Number(inserted[0].id),
-      Number(r.consignor_id),
-      amount,
-      `payout_loss_${rentalId}`
-    );
+    // Accrues as 'pending' in the ledger regardless of whether we recover the
+    // charge from the renter; paid out later with the owed balance.
   } catch (err) {
     console.error(`[connect] createConsignorLossPayout(${rentalId}) failed:`, (err as Error).message);
   }
