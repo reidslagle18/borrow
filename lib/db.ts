@@ -393,7 +393,7 @@ async function createSchema(): Promise<void> {
   // Allow 'repair' charges (repairable damage — actual repair cost).
   await sql`ALTER TABLE customer_charges DROP CONSTRAINT IF EXISTS customer_charges_kind_check`;
   await sql`ALTER TABLE customer_charges ADD CONSTRAINT customer_charges_kind_check
-    CHECK (kind IN ('late_fee','replacement','repair'))`;
+    CHECK (kind IN ('late_fee','replacement','repair','hanger','garment_bag'))`;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */

@@ -47,6 +47,8 @@ export async function PUT(request: Request) {
     post_credit: num(p.post_credit, DEFAULT_PROGRAM.post_credit),
     terminal_reader_id:
       typeof p.terminal_reader_id === "string" ? p.terminal_reader_id.trim() : "",
+    hanger_fee: num(p.hanger_fee, DEFAULT_PROGRAM.hanger_fee),
+    garment_bag_fee: num(p.garment_bag_fee, DEFAULT_PROGRAM.garment_bag_fee),
   };
 
   await sql`

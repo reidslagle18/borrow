@@ -88,6 +88,8 @@ function CheckoutInner() {
 
   const [ambCustomerIds, setAmbCustomerIds] = useState<Set<number>>(new Set());
   const [cleaningFee, setCleaningFee] = useState<number>(CLEANING_FEE_DEFAULT);
+  const [hangerFee, setHangerFee] = useState(0);
+  const [bagFee, setBagFee] = useState(0);
   // Terminal readers are looked up live from Stripe (never a stored id, which
   // could be from the wrong mode). null = still loading.
   const [readers, setReaders] = useState<TerminalReader[] | null>(null);
@@ -131,6 +133,8 @@ function CheckoutInner() {
         if (sr.ok) {
           const s = await sr.json();
           if (s.program?.cleaning_fee != null) setCleaningFee(s.program.cleaning_fee);
+          if (s.program?.hanger_fee != null) setHangerFee(Number(s.program.hanger_fee));
+          if (s.program?.garment_bag_fee != null) setBagFee(Number(s.program.garment_bag_fee));
           if (s.program?.terminal_reader_id) settingsPref = s.program.terminal_reader_id;
         }
         // Resolve the reader from the LIVE list: prefer the one remembered on
@@ -1046,6 +1050,15 @@ function CheckoutInner() {
             <span>Total</span>
             <span>{money(total)}</span>
           </div>
+          {(hangerFee > 0 || bagFee > 0) && (
+            <p className="mt-2.5 text-[12px] text-ink/45">
+              If not returned with the piece, the card on file is charged
+              {hangerFee > 0 ? ` ${money(hangerFee)} per hanger` : ""}
+              {hangerFee > 0 && bagFee > 0 ? " and" : ""}
+              {bagFee > 0 ? ` ${money(bagFee)} per garment bag` : ""}. Late returns
+              are {money(15)}/item/day.
+            </p>
+          )}
         </section>
 
         {/* Agreement */}

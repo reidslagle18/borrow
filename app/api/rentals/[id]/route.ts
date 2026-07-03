@@ -4,6 +4,7 @@ import { sendConsignorRentedEmail } from "@/lib/email";
 import { CONSIGNOR_SHARE } from "@/lib/types";
 import { payoutForCompletedRental, createConsignorLossPayout } from "@/lib/connect";
 import { chargeRenterForRental } from "@/lib/charges";
+import { getProgram } from "@/lib/credits";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -178,6 +179,29 @@ export async function PATCH(request: Request, ctx: Ctx) {
         description: `Replacement — ${it?.brand ?? "rental"}`,
         origin,
       });
+    }
+
+    // Missing hanger / garment bag → charge the configured fee off-session.
+    if (b.hanger_missing || b.garment_bag_missing) {
+      const program = await getProgram();
+      if (b.hanger_missing && program.hanger_fee > 0) {
+        await chargeRenterForRental({
+          rentalId: Number(id),
+          amount: program.hanger_fee,
+          kind: "hanger",
+          description: `Missing hanger — ${it?.brand ?? "rental"}`,
+          origin,
+        });
+      }
+      if (b.garment_bag_missing && program.garment_bag_fee > 0) {
+        await chargeRenterForRental({
+          rentalId: Number(id),
+          amount: program.garment_bag_fee,
+          kind: "garment_bag",
+          description: `Missing garment bag — ${it?.brand ?? "rental"}`,
+          origin,
+        });
+      }
     }
 
     // Normal consignor 60% earnings on the completed rental (no-op for

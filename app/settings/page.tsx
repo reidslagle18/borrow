@@ -218,6 +218,49 @@ export default function SettingsPage() {
               </div>
             </section>
 
+            {/* Missing-item fees */}
+            <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
+              <h2 className="font-serif text-xl italic text-ink/70">
+                Missing-item fees
+              </h2>
+              <p className="mt-1 text-[13px] text-ink/50">
+                Charged to the renter&apos;s card on file if a hanger or garment
+                bag isn&apos;t returned. Shown at checkout.
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div>
+                  <label className={labelCls}>Missing hanger fee ($)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    className={inputCls}
+                    value={program.hanger_fee}
+                    onChange={(e) =>
+                      setProgram((p) => ({
+                        ...p,
+                        hanger_fee: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                      }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className={labelCls}>Missing garment bag fee ($)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    className={inputCls}
+                    value={program.garment_bag_fee}
+                    onChange={(e) =>
+                      setProgram((p) => ({
+                        ...p,
+                        garment_bag_fee: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+            </section>
+
             {/* Posting target */}
             <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
               <h2 className="font-serif text-xl italic text-ink/70">Posting target</h2>

@@ -46,12 +46,28 @@ function CheckInModal({
   const [repairCost, setRepairCost] = useState("");
   const [damageNote, setDamageNote] = useState("");
   const [feeOverride, setFeeOverride] = useState<string | null>(null);
+  const [hangerMissing, setHangerMissing] = useState(false);
+  const [bagMissing, setBagMissing] = useState(false);
+  const [hangerFee, setHangerFee] = useState(0);
+  const [bagFee, setBagFee] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const replacementValue = Number(rental.item_replacement_value ?? 0);
   const isConsigned = rental.ownership === "consignment";
   const fmtMoney = (n: number) => `$${n % 1 === 0 ? n : n.toFixed(2)}`;
+
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.program) {
+          setHangerFee(Number(d.program.hanger_fee) || 0);
+          setBagFee(Number(d.program.garment_bag_fee) || 0);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const late = daysLate(due, returnedDate);
   const autoFee = late * 15;
@@ -70,6 +86,8 @@ function CheckInModal({
         repair_cost: issue === "repair" ? Number(repairCost || 0) : undefined,
         damage_note: issue === "none" ? "" : damageNote,
         late_fee: feeOverride !== null ? Number(feeOverride || 0) : undefined,
+        hanger_missing: hangerMissing,
+        garment_bag_missing: bagMissing,
       }),
     });
     if (res.ok) {
@@ -251,6 +269,41 @@ function CheckInModal({
             )}
           </div>
 
+          {/* Missing hanger / garment bag — charged to the saved card */}
+          <div>
+            <label className={labelCls}>Returned with</label>
+            <div className="space-y-2">
+              <label className="flex items-center gap-2.5 rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-[15px]">
+                <input
+                  type="checkbox"
+                  checked={hangerMissing}
+                  onChange={(e) => setHangerMissing(e.target.checked)}
+                  className="h-4 w-4 accent-ink"
+                />
+                <span>
+                  Hanger not returned
+                  {hangerFee > 0 && (
+                    <span className="text-ink/50"> · charge {fmtMoney(hangerFee)}</span>
+                  )}
+                </span>
+              </label>
+              <label className="flex items-center gap-2.5 rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-[15px]">
+                <input
+                  type="checkbox"
+                  checked={bagMissing}
+                  onChange={(e) => setBagMissing(e.target.checked)}
+                  className="h-4 w-4 accent-ink"
+                />
+                <span>
+                  Garment bag not returned
+                  {bagFee > 0 && (
+                    <span className="text-ink/50"> · charge {fmtMoney(bagFee)}</span>
+                  )}
+                </span>
+              </label>
+            </div>
+          </div>
+
           {error && <p className="text-sm text-blush-deep">{error}</p>}
 
           <button
@@ -368,6 +421,19 @@ export default function ReturnsPage() {
               </span>
             )}
           </p>
+          {r.payment_followup && (
+            <p className="mt-1 flex items-center gap-2 text-[12px] text-blush-deep">
+              A charge to their card failed — needs follow-up.
+              {r.payment_link_url && (
+                <button
+                  onClick={() => navigator.clipboard?.writeText(r.payment_link_url!)}
+                  className="rounded-full border border-blush-deep px-2 py-0.5 text-[11px]"
+                >
+                  Copy pay link
+                </button>
+              )}
+            </p>
+          )}
         </div>
         <button
           onClick={() => setChecking(r)}

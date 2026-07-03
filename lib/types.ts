@@ -88,10 +88,10 @@ export const RENTAL_DAYS = 7;
 /** Rental agreement terms shown at checkout and included in the receipt. */
 export const AGREEMENT_TERMS = [
   "Pieces are rented for a 7-day window and are due back by the due date.",
-  "A Cleaning & Care Fee is added to every paying rental.",
-  "The Cleaning & Care Fee covers professional cleaning and standard handling only. It is not damage insurance. The renter is responsible for the cost of repairing or replacing any item that is damaged beyond normal wear, stained beyond cleaning, lost, or not returned, up to the item's full replacement value.",
-  "Late returns are charged $15 per piece per day past the due date.",
-  "If an item is not returned, or is returned damaged beyond repair, the renter authorizes Borrow to charge the payment method on file the item's replacement value as recorded at the time of rental. The replacement value reflects the fair value of the item.",
+  "A Cleaning & Care Fee is added to every paying rental. It covers professional cleaning and standard handling only — it is not damage insurance.",
+  "The renter authorizes Borrow to charge the payment method on file $15 per item per day for each day an item is returned past its due date.",
+  "The renter authorizes Borrow to charge the payment method on file for the cost of repairing any item damaged beyond normal wear, or the item's recorded replacement value if it is not returned or is damaged beyond repair.",
+  "Each rental includes a hanger and a garment bag. The renter authorizes Borrow to charge the payment method on file a fee for any hanger or garment bag not returned with the item, as listed at checkout.",
 ];
 
 /** Consignor agreement terms — shown when setting up / managing a consignor. */
@@ -208,6 +208,8 @@ export interface AmbassadorProgram {
   posting_target: number; // posts expected per ambassador per month
   post_credit: number; // store credit a customer earns for posting a rental
   terminal_reader_id: string; // Stripe Terminal reader for in-person tap charges
+  hanger_fee: number; // charged if the hanger isn't returned
+  garment_bag_fee: number; // charged if the garment bag isn't returned
 }
 
 export const DEFAULT_PROGRAM: AmbassadorProgram = {
@@ -221,6 +223,8 @@ export const DEFAULT_PROGRAM: AmbassadorProgram = {
   posting_target: 3,
   post_credit: 5,
   terminal_reader_id: "",
+  hanger_fee: 5,
+  garment_bag_fee: 15,
 };
 
 export interface AmbassadorPost {

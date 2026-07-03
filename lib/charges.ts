@@ -16,14 +16,25 @@ export type ChargeResult = {
   paymentLinkUrl?: string | null;
 };
 
+export type ChargeKind =
+  | "late_fee"
+  | "replacement"
+  | "repair"
+  | "hanger"
+  | "garment_bag";
+
 export async function chargeRenterForRental(opts: {
   rentalId: number;
   amount: number;
-  kind: "repair" | "replacement";
+  kind: ChargeKind;
   description: string;
   origin: string;
+  // Override for repeatable charges (e.g. late fees accrue per day); defaults
+  // to one-per-rental-per-kind so repair/replacement/hanger can't double-charge.
+  idempotencyKey?: string;
 }): Promise<ChargeResult> {
   const { rentalId, amount, kind, description, origin } = opts;
+  const idempotencyKey = opts.idempotencyKey || `charge_${kind}_${rentalId}`;
   const stripe = getStripe();
   if (!stripe || amount <= 0) return { status: "skipped" };
 
@@ -61,7 +72,7 @@ export async function chargeRenterForRental(opts: {
         description,
         metadata: { rental_id: String(rentalId), kind },
       },
-      { idempotencyKey: `charge_${kind}_${rentalId}` }
+      { idempotencyKey }
     );
     if (pi.status === "succeeded") {
       await sql`
@@ -87,7 +98,7 @@ async function flagUncollected(
   r: { id: number; customer_id: number | null; stripe_customer_id: string | null },
   cents: number,
   amount: number,
-  kind: "repair" | "replacement",
+  kind: ChargeKind,
   description: string,
   origin: string,
   piId: string | null

@@ -27,6 +27,8 @@ export async function getProgram(): Promise<AmbassadorProgram> {
     posting_target: v.posting_target ?? DEFAULT_PROGRAM.posting_target,
     post_credit: v.post_credit ?? DEFAULT_PROGRAM.post_credit,
     terminal_reader_id: v.terminal_reader_id ?? DEFAULT_PROGRAM.terminal_reader_id,
+    hanger_fee: v.hanger_fee ?? DEFAULT_PROGRAM.hanger_fee,
+    garment_bag_fee: v.garment_bag_fee ?? DEFAULT_PROGRAM.garment_bag_fee,
   };
 }
 
