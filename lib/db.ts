@@ -37,6 +37,8 @@ async function createSchema(): Promise<void> {
   // identity/bank verification is complete and transfers are active.
   await sql`ALTER TABLE consignors ADD COLUMN IF NOT EXISTS stripe_account_id TEXT`;
   await sql`ALTER TABLE consignors ADD COLUMN IF NOT EXISTS payouts_enabled BOOLEAN NOT NULL DEFAULT false`;
+  // When the welcome (payout-setup) email was last sent, so we can show it.
+  await sql`ALTER TABLE consignors ADD COLUMN IF NOT EXISTS welcome_sent_at TIMESTAMPTZ`;
   await sql`CREATE SEQUENCE IF NOT EXISTS item_id_seq START 1`;
   await sql`
     CREATE TABLE IF NOT EXISTS items (

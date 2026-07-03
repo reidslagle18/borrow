@@ -33,6 +33,7 @@ type ConsignorDetail = ConsignorRow & {
   cleaning_charges: number;
   stripe_account_id: string | null;
   payouts_enabled: boolean;
+  welcome_sent_at: string | null;
 };
 
 const STATUS_BADGE: Record<ItemStatus, string> = {
@@ -62,7 +63,6 @@ function ConsignorForm({
   const [phone, setPhone] = useState(consignor?.phone ?? "");
   const [email, setEmail] = useState(consignor?.email ?? "");
   const [notes, setNotes] = useState(consignor?.notes ?? "");
-  const [sendWelcome, setSendWelcome] = useState(true); // new consignors only
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -82,7 +82,6 @@ function ConsignorForm({
           phone: phone.trim(),
           email: email.trim(),
           notes: notes.trim(),
-          send_welcome: !consignor && sendWelcome,
         }),
       }
     );
@@ -124,19 +123,12 @@ function ConsignorForm({
             <input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Drop-off habits, anything useful…" />
           </div>
           {!consignor && (
-            <label className="flex items-start gap-2.5 rounded-2xl bg-lavender/25 px-3.5 py-3 text-[14px]">
-              <input
-                type="checkbox"
-                checked={sendWelcome}
-                onChange={(e) => setSendWelcome(e.target.checked)}
-                className="mt-0.5 h-4 w-4 accent-ink"
-              />
-              <span className="text-ink/70">
-                Email a welcome — their portal link (to see pieces, earnings &amp;
-                payout status) plus a secure link to set up direct deposit.
-                {" "}Needs an email above.
-              </span>
-            </label>
+            <p className="rounded-2xl bg-lavender/25 px-3.5 py-3 text-[13px] text-ink/60">
+              On save, we create their Stripe payout account and{" "}
+              <span className="font-medium">automatically email them</span> a
+              welcome with their personal payout-setup link. Add their email
+              above so it can send.
+            </p>
           )}
         </div>
         {error && <p className="mt-3 text-sm text-blush-deep">{error}</p>}
@@ -238,10 +230,11 @@ function DetailModal({
     setWelcomeMsg("");
     const res = await fetch(`/api/consignors/${id}/welcome`, { method: "POST" });
     const d = await res.json().catch(() => ({}));
+    if (res.ok && d.sent) await load();
     setWelcomeMsg(
       res.ok
         ? d.sent
-          ? "Welcome sent — portal + direct-deposit links included."
+          ? "Welcome email sent with their payout-setup link."
           : "Couldn't send (add an email, or email isn't configured)."
         : d.error || "Couldn't send."
     );
@@ -397,13 +390,18 @@ function DetailModal({
                   ? "Bank added & verified — you can pay them directly below."
                   : "They add their bank & verify identity through Stripe. Earnings still accrue below; they just can't be paid until this is done."}
               </p>
+              <p className="mt-1.5 text-[12px] text-ink/45">
+                {detail.welcome_sent_at
+                  ? `Welcome email sent ${fmtShort(dateOnly(detail.welcome_sent_at))}.`
+                  : "Welcome email not sent yet."}
+              </p>
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <button
                   onClick={sendWelcome}
                   disabled={welcomeBusy}
                   className="rounded-full border border-ink/15 px-4 py-2 text-[13px] text-ink/70 disabled:opacity-40"
                 >
-                  {welcomeBusy ? "Sending…" : "Send welcome / invite"}
+                  {welcomeBusy ? "Sending…" : "Resend welcome email"}
                 </button>
                 {!detail.payouts_enabled &&
                   (connectUrl ? (

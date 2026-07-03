@@ -32,8 +32,8 @@ export async function POST(request: Request) {
   const url = await createOnboardingLink(
     stripe,
     accountId,
-    `${origin}/consignors?connect=done&c=${b.consignor_id}`,
-    `${origin}/consignors?connect=refresh&c=${b.consignor_id}`
+    `${origin}/connect/return?status=done`,
+    `${origin}/connect/return?status=refresh`
   );
   return NextResponse.json({ url });
 }

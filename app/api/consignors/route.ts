@@ -42,36 +42,39 @@ export async function POST(request: Request) {
   `;
   const consignor = rows[0];
 
-  // Create their Stripe Connect account + a fresh onboarding link up front, so
-  // the welcome can invite them to set up direct deposit right away.
+  // Create their Express connected account (receive-only) + a fresh onboarding
+  // Account Link that returns to borrow-studio, so the welcome can send it now.
   let onboardingUrl: string | null = null;
+  const origin = new URL(request.url).origin;
   const stripe = getStripe();
   if (stripe) {
     try {
       const accountId = await getOrCreateConnectedAccount(stripe, consignor);
       consignor.stripe_account_id = accountId;
-      const base = process.env.PORTAL_URL || "https://borrow-shop.vercel.app/portal";
       onboardingUrl = await createOnboardingLink(
         stripe,
         accountId,
-        `${base}?deposit=done`,
-        `${base}?deposit=refresh`
+        `${origin}/connect/return?status=done`,
+        `${origin}/connect/return?status=refresh`
       );
     } catch (err) {
       console.error("[consignors] Connect setup failed:", (err as Error).message);
     }
   }
 
-  // Optional welcome invite: portal magic link + the onboarding link.
+  // Auto-send the welcome (with their onboarding link) — no manual step needed.
   let welcomeSent = false;
-  if (b.send_welcome && consignor.email) {
+  if (consignor.email) {
     const r = await sendConsignorWelcome({
       to: consignor.email,
       consignorName: consignor.name,
-      portalCode: consignor.portal_code ?? null,
       onboardingUrl,
     });
     welcomeSent = r.sent;
+    if (r.sent) {
+      await sql`UPDATE consignors SET welcome_sent_at = now() WHERE id = ${consignor.id}`;
+      consignor.welcome_sent_at = new Date().toISOString();
+    }
     console.log(`[consignors] welcome to ${consignor.email}:`, JSON.stringify(r));
   }
 

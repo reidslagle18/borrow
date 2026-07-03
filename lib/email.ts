@@ -275,39 +275,34 @@ export interface PayoutNoticeData {
 export interface ConsignorWelcomeData {
   to: string;
   consignorName: string;
-  portalCode: string | null;
   onboardingUrl: string | null;
 }
 
 /**
- * Welcomes a newly-added consignor: a passwordless magic link to their portal
- * (their contact info is their login) plus a secure Stripe link to set up
- * direct deposit so they can be paid.
+ * Welcomes a newly-added consignor with their personal Stripe onboarding link
+ * so they can set up how they get paid. Exact copy provided by Borrow.
  */
 export async function sendConsignorWelcome(d: ConsignorWelcomeData) {
   const first = d.consignorName.split(" ")[0] || "there";
-  const portalLink = d.portalCode
-    ? `${PORTAL_URL}?code=${encodeURIComponent(d.portalCode)}`
-    : PORTAL_URL;
+  const link = d.onboardingUrl || PORTAL_URL;
+  const p = "font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;";
   return sendEmail(
     d.to,
-    "Welcome to BORROW — your consignor account",
+    "Welcome to Borrow — one quick step to get paid",
     BRAND_WRAP(`
-      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">You're in</p>
-      <p style="font-size:16px;">Hi ${first}, your BORROW consignor account is ready. From your portal you can see your pieces, your earnings, and your payout status — no password needed, just use your personal link.</p>
-      <p style="margin:24px 0;"><a href="${portalLink}" style="background:#1a1a1a;color:#f7f4ef;text-decoration:none;padding:12px 22px;border-radius:999px;font-family:Helvetica,Arial,sans-serif;font-size:14px;">Open my portal</a></p>
-      ${
-        d.onboardingUrl
-          ? `<p style="font-family:Helvetica,Arial,sans-serif;font-size:15px;">To get paid, set up direct deposit — add your bank and verify your identity, handled securely by Stripe:</p>
-             <p style="margin:16px 0;"><a href="${d.onboardingUrl}" style="background:#1a1a1a;color:#f7f4ef;text-decoration:none;padding:12px 22px;border-radius:999px;font-family:Helvetica,Arial,sans-serif;font-size:14px;">Set up direct deposit</a></p>
-             <p style="font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#888;">If that link expires, you can start it again anytime from your portal.</p>`
-          : ""
-      }
-      ${
-        d.portalCode
-          ? `<p style="font-family:Helvetica,Arial,sans-serif;font-size:13px;color:#888;">Your access code: <strong style="font-family:monospace;">${d.portalCode}</strong></p>`
-          : ""
-      }
+      <p style="${p}">Hi ${first},</p>
+      <p style="${p}">Welcome to the Borrow consignor family! We're so excited to have your pieces in the closet.</p>
+      <p style="${p}">To pay you your earnings, we use Stripe (a secure payment service). Tap the link below to set up your payout info — it takes about 2–5 minutes on your phone:</p>
+      <p style="margin:22px 0;"><a href="${link}" style="background:#1a1a1a;color:#f7f4ef;text-decoration:none;padding:12px 24px;border-radius:999px;font-family:Helvetica,Arial,sans-serif;font-size:14px;">Set up my payout info</a></p>
+      <p style="${p}">A few things so it goes smoothly:</p>
+      <ul style="${p}padding-left:20px;">
+        <li style="margin-bottom:8px;">Stripe calls everyone a "business" on the form — ignore that, it's just their standard wording. You're not signing up for anything or paying anything; this is only so we can send you money and handle taxes correctly.</li>
+        <li style="margin-bottom:8px;">You'll need your legal name (as it appears on your ID), date of birth, address, the last 4 digits of your SSN, and where to send your money (a bank account or debit card — debit is easiest).</li>
+        <li style="margin-bottom:8px;">When it asks for "your website," you don't need one. Click "Don't have a website? Add product description instead" right below that field, and just write something like: "I consign clothing items to Borrow, a dress rental boutique, and receive a share of the rental income."</li>
+      </ul>
+      <p style="${p}">That's it! Once you're set up, you'll earn 60% every time one of your pieces rents, paid out on your regular cycle.</p>
+      <p style="${p}">Questions? Just reply to this email or DM us @borrowfayetteville.</p>
+      <p style="${p}">xo,<br/>Borrow</p>
     `)
   );
 }
