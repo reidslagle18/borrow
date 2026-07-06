@@ -408,6 +408,10 @@ async function createSchema(): Promise<void> {
   `;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS dropoff_slot_key
     ON drop_off_appointments(slot_date, slot_time) WHERE status = 'booked'`;
+  // Allow marking an appointment 'completed' once the person has come in.
+  await sql`ALTER TABLE drop_off_appointments DROP CONSTRAINT IF EXISTS drop_off_appointments_status_check`;
+  await sql`ALTER TABLE drop_off_appointments ADD CONSTRAINT drop_off_appointments_status_check
+    CHECK (status IN ('booked','cancelled','completed'))`;
 
   // Allow 'repair' charges (repairable damage — actual repair cost).
   await sql`ALTER TABLE customer_charges DROP CONSTRAINT IF EXISTS customer_charges_kind_check`;

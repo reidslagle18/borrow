@@ -26,6 +26,11 @@ function prettyTime(t: string): string {
 export default function DropoffPage() {
   const [appts, setAppts] = useState<Appt[] | null>(null);
   const [confirmCancel, setConfirmCancel] = useState<number | null>(null);
+  const [reschedId, setReschedId] = useState<number | null>(null);
+  const [rDate, setRDate] = useState("");
+  const [rSlots, setRSlots] = useState<string[] | null>(null);
+  const [rSlot, setRSlot] = useState("");
+  const [busy, setBusy] = useState(false);
 
   async function load() {
     const res = await fetch("/api/dropoff");
@@ -35,12 +40,81 @@ export default function DropoffPage() {
     load();
   }, []);
 
+  // Load open slots when choosing a new time for a reschedule.
+  useEffect(() => {
+    if (!rDate) {
+      setRSlots(null);
+      return;
+    }
+    setRSlots(null);
+    setRSlot("");
+    fetch(`/api/dropoff?date=${rDate}`)
+      .then((r) => (r.ok ? r.json() : { slots: [] }))
+      .then((d) => setRSlots(d.slots || []))
+      .catch(() => setRSlots([]));
+  }, [rDate]);
+
   async function cancel(id: number) {
     const res = await fetch(`/api/dropoff/${id}`, { method: "DELETE" });
     if (res.ok) {
       setAppts((prev) => (prev ? prev.filter((a) => a.id !== id) : prev));
       setConfirmCancel(null);
     }
+  }
+
+  async function complete(id: number) {
+    const res = await fetch(`/api/dropoff/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "complete" }),
+    });
+    if (res.ok) {
+      setAppts((prev) => (prev ? prev.filter((a) => a.id !== id) : prev));
+    }
+  }
+
+  function startReschedule(id: number) {
+    setReschedId(id);
+    setRDate("");
+    setRSlot("");
+    setConfirmCancel(null);
+  }
+
+  async function submitReschedule(id: number) {
+    if (!rDate || !rSlot) return;
+    setBusy(true);
+    const res = await fetch(`/api/dropoff/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: rDate, time: rSlot }),
+    });
+    if (res.ok) {
+      const u = await res.json();
+      setAppts((prev) =>
+        prev
+          ? prev
+              .map((a) =>
+                a.id === id ? { ...a, slot_date: u.slot_date, slot_time: u.slot_time } : a
+              )
+              .sort((a, b) =>
+                (a.slot_date + a.slot_time).localeCompare(b.slot_date + b.slot_time)
+              )
+          : prev
+      );
+      setReschedId(null);
+      setRDate("");
+    } else {
+      const d = await res.json().catch(() => ({}));
+      alert(d.error || "Couldn't reschedule.");
+      if (rDate) {
+        fetch(`/api/dropoff?date=${rDate}`)
+          .then((r) => r.json())
+          .then((x) => setRSlots(x.slots || []))
+          .catch(() => {});
+        setRSlot("");
+      }
+    }
+    setBusy(false);
   }
 
   const today = new Date().toISOString().slice(0, 10);
@@ -63,36 +137,106 @@ export default function DropoffPage() {
         ? `Customer · ${a.customer_name}`
         : "New to Borrow";
     return (
-      <div className="flex items-center gap-3 rounded-2xl bg-white p-3.5">
-        <div className="w-20 shrink-0 text-center">
-          <p className="font-serif text-lg font-semibold">{prettyTime(a.slot_time)}</p>
+      <div className="rounded-2xl bg-white p-3.5">
+        <div className="flex items-start gap-3">
+          <div className="w-20 shrink-0 text-center">
+            <p className="font-serif text-lg font-semibold">{prettyTime(a.slot_time)}</p>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[15px] font-medium">
+              {a.name}{" "}
+              <span className="text-ink/50">
+                · {a.item_count} item{a.item_count === 1 ? "" : "s"}
+              </span>
+            </p>
+            <p className="truncate text-[13px] text-ink/55">
+              {a.phone || "no phone"}
+              {a.email ? ` · ${a.email}` : ""}
+            </p>
+            <p className="text-[12px] text-ink/45">{linked}</p>
+          </div>
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            <button
+              onClick={() => complete(a.id)}
+              className="rounded-full border border-sage-deep bg-sage px-3 py-1.5 text-[12px] text-ink"
+            >
+              Completed
+            </button>
+            <button
+              onClick={() => startReschedule(a.id)}
+              className="rounded-full border border-ink/15 px-3 py-1.5 text-[12px] text-ink/60"
+            >
+              Reschedule
+            </button>
+            {confirmCancel === a.id ? (
+              <button
+                onClick={() => cancel(a.id)}
+                className="rounded-full border border-blush-deep px-3 py-1.5 text-[12px] text-blush-deep"
+              >
+                Cancel it?
+              </button>
+            ) : (
+              <button
+                onClick={() => setConfirmCancel(a.id)}
+                className="rounded-full px-3 py-1.5 text-[12px] text-ink/40"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[15px] font-medium">
-            {a.name}{" "}
-            <span className="text-ink/50">
-              · {a.item_count} item{a.item_count === 1 ? "" : "s"}
-            </span>
-          </p>
-          <p className="truncate text-[13px] text-ink/55">
-            {[a.phone, a.email].filter(Boolean).join(" · ") || "no contact"}
-          </p>
-          <p className="text-[12px] text-ink/45">{linked}</p>
-        </div>
-        {confirmCancel === a.id ? (
-          <button
-            onClick={() => cancel(a.id)}
-            className="shrink-0 rounded-full border border-blush-deep px-3 py-1.5 text-[12px] text-blush-deep"
-          >
-            Cancel it?
-          </button>
-        ) : (
-          <button
-            onClick={() => setConfirmCancel(a.id)}
-            className="shrink-0 rounded-full border border-ink/15 px-3 py-1.5 text-[12px] text-ink/50"
-          >
-            Cancel
-          </button>
+
+        {reschedId === a.id && (
+          <div className="mt-3 rounded-xl bg-cream p-3.5">
+            <p className="mb-2 text-[13px] text-ink/60">Move to a new day &amp; time:</p>
+            <input
+              type="date"
+              min={new Date().toISOString().slice(0, 10)}
+              value={rDate}
+              onChange={(e) => setRDate(e.target.value)}
+              className="w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-[15px] outline-none"
+            />
+            {rDate && (
+              <div className="mt-2">
+                {rSlots === null ? (
+                  <p className="text-[13px] text-ink/45">Loading times…</p>
+                ) : rSlots.length === 0 ? (
+                  <p className="text-[13px] text-ink/55">No openings that day.</p>
+                ) : (
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {rSlots.map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => setRSlot(s)}
+                        className={`rounded-full border px-1 py-2 text-[12px] ${
+                          rSlot === s
+                            ? "border-ink bg-ink text-cream"
+                            : "border-ink/15 bg-white text-ink/70"
+                        }`}
+                      >
+                        {prettyTime(s)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="mt-3 flex gap-2">
+              <button
+                onClick={() => submitReschedule(a.id)}
+                disabled={busy || !rSlot}
+                className="rounded-full bg-ink px-4 py-2 text-[13px] text-cream disabled:opacity-40"
+              >
+                {busy ? "Saving…" : "Confirm new time"}
+              </button>
+              <button
+                onClick={() => setReschedId(null)}
+                className="rounded-full px-4 py-2 text-[13px] text-ink/50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         )}
       </div>
     );
