@@ -307,6 +307,42 @@ export async function sendConsignorWelcome(d: ConsignorWelcomeData) {
   );
 }
 
+export interface DropoffConfirmationData {
+  to: string;
+  name: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM (24h)
+  itemCount: number;
+}
+
+/** Confirms a consignor's drop-off appointment (date, time, count + guidelines). */
+export async function sendDropoffConfirmation(d: DropoffConfirmationData) {
+  const first = d.name.split(" ")[0] || "there";
+  const prettyDate = new Date(`${d.date}T12:00:00Z`).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+  const [h, m] = d.time.split(":").map(Number);
+  const prettyTime = `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+  const p = "font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;";
+  return sendEmail(
+    d.to,
+    "Your Borrow drop-off appointment is booked",
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Drop-off booked</p>
+      <p style="${p}">Hi ${first}, you're all set to bring in your pieces:</p>
+      <p style="${p}font-size:18px;"><strong>${prettyDate} at ${prettyTime}</strong><br/>${d.itemCount} item${d.itemCount === 1 ? "" : "s"}</p>
+      <p style="${p}">A few reminders so it goes smoothly:</p>
+      <p style="${p}">Borrow is a curated closet, so we're selective about what we carry — bring your best, current, on-trend pieces in excellent condition. All items should be clean and ready to rent; we're unable to accept anything stained, damaged, or in need of cleaning.</p>
+      <p style="${p}">We may accept some, all, or none of what you bring in — that's what keeps the closet special.</p>
+      <p style="${p}">Accepted pieces are consigned to you: you earn 60% every time yours rents, and you can retrieve any piece at any time, as long as it isn't currently rented out or reserved.</p>
+      <p style="${p}">See you then! Questions? Reply here or DM @borrowfayetteville.</p>
+      <p style="${p}">xo,<br/>Borrow</p>
+    `)
+  );
+}
+
 /** Notifies a consignor that BORROW has sent them a payout. */
 export async function sendPayoutNotice(d: PayoutNoticeData) {
   const first = d.consignorName.split(" ")[0] || "there";

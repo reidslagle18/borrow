@@ -2,11 +2,12 @@ import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { getProgram } from "@/lib/credits";
 import { AmbassadorProgram, DEFAULT_PROGRAM } from "@/lib/types";
+import { getDropoffConfig, DEFAULT_DROPOFF, DropoffConfig } from "@/lib/dropoff";
 
 export async function GET() {
   await ensureSchema();
-  const program = await getProgram();
-  return NextResponse.json({ program });
+  const [program, dropoff] = await Promise.all([getProgram(), getDropoffConfig()]);
+  return NextResponse.json({ program, dropoff });
 }
 
 export async function PUT(request: Request) {
@@ -56,5 +57,38 @@ export async function PUT(request: Request) {
     VALUES ('ambassador_program', ${JSON.stringify(program)}::jsonb, now())
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
   `;
-  return NextResponse.json({ program });
+
+  // Drop-off booking window (optional in the same save).
+  let dropoff = await getDropoffConfig();
+  if (b.dropoff) {
+    const d = b.dropoff as Partial<DropoffConfig>;
+    const time = (v: unknown, fb: string) =>
+      typeof v === "string" && /^\d{1,2}:\d{2}$/.test(v) ? v : fb;
+    dropoff = {
+      open_days: Array.isArray(d.open_days)
+        ? Array.from(new Set(d.open_days.map(Number).filter((n) => n >= 0 && n <= 6)))
+        : DEFAULT_DROPOFF.open_days,
+      open_time: time(d.open_time, DEFAULT_DROPOFF.open_time),
+      close_time: time(d.close_time, DEFAULT_DROPOFF.close_time),
+      slot_minutes: [10, 15, 20, 30, 60].includes(Number(d.slot_minutes))
+        ? Number(d.slot_minutes)
+        : DEFAULT_DROPOFF.slot_minutes,
+      closed_dates: Array.isArray(d.closed_dates)
+        ? Array.from(
+            new Set(
+              d.closed_dates
+                .map((x) => String(x).trim())
+                .filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x))
+            )
+          ).sort()
+        : [],
+    };
+    await sql`
+      INSERT INTO app_settings (key, value, updated_at)
+      VALUES ('dropoff', ${JSON.stringify(dropoff)}::jsonb, now())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+    `;
+  }
+
+  return NextResponse.json({ program, dropoff });
 }

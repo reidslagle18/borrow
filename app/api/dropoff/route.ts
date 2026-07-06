@@ -1,0 +1,18 @@
+import { NextResponse } from "next/server";
+import { sql, ensureSchema } from "@/lib/db";
+
+/** Admin: booked drop-off appointments (upcoming first), with linked records. */
+export async function GET() {
+  await ensureSchema();
+  const rows = await sql`
+    SELECT a.*,
+           cu.name AS customer_name,
+           co.name AS consignor_name
+    FROM drop_off_appointments a
+    LEFT JOIN customers cu ON cu.id = a.customer_id
+    LEFT JOIN consignors co ON co.id = a.consignor_id
+    WHERE a.status = 'booked'
+    ORDER BY a.slot_date ASC, a.slot_time ASC
+  `;
+  return NextResponse.json(rows);
+}

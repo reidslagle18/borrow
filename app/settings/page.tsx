@@ -8,8 +8,27 @@ const inputCls =
   "w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-[15px] outline-none focus:border-ink/40";
 const labelCls = "mb-1.5 block text-xs uppercase tracking-[0.15em] text-ink/50";
 
+// Local copy (avoids importing the server-only lib/dropoff into the client).
+type DropoffConfig = {
+  open_days: number[];
+  open_time: string;
+  close_time: string;
+  slot_minutes: number;
+  closed_dates: string[];
+};
+const DEFAULT_DROPOFF: DropoffConfig = {
+  open_days: [1, 2, 3, 4, 5, 6],
+  open_time: "10:00",
+  close_time: "18:00",
+  slot_minutes: 15,
+  closed_dates: [],
+};
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
 export default function SettingsPage() {
   const [program, setProgram] = useState<AmbassadorProgram>(DEFAULT_PROGRAM);
+  const [dropoff, setDropoff] = useState<DropoffConfig>(DEFAULT_DROPOFF);
+  const [closedDate, setClosedDate] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(false);
@@ -69,6 +88,7 @@ export default function SettingsPage() {
       if (res.ok) {
         const d = await res.json();
         setProgram(d.program);
+        if (d.dropoff) setDropoff(d.dropoff);
       }
       setLoaded(true);
     })();
@@ -108,11 +128,12 @@ export default function SettingsPage() {
     const res = await fetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ program }),
+      body: JSON.stringify({ program, dropoff }),
     });
     if (res.ok) {
       const d = await res.json();
       setProgram(d.program);
+      if (d.dropoff) setDropoff(d.dropoff);
       setSavedAt(true);
     }
     setSaving(false);
@@ -257,6 +278,133 @@ export default function SettingsPage() {
                       }))
                     }
                   />
+                </div>
+              </div>
+            </section>
+
+            {/* Drop-off appointment window */}
+            <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
+              <h2 className="font-serif text-xl italic text-ink/70">
+                Drop-off appointments
+              </h2>
+              <p className="mt-1 text-[13px] text-ink/50">
+                Hours and closed days for consignors booking a drop-off on the shop.
+                Slots outside these never show.
+              </p>
+              <div className="mt-3">
+                <label className={labelCls}>Open days</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {DAYS.map((d, i) => {
+                    const on = dropoff.open_days.includes(i);
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() =>
+                          setDropoff((p) => ({
+                            ...p,
+                            open_days: on
+                              ? p.open_days.filter((x) => x !== i)
+                              : [...p.open_days, i].sort((a, b) => a - b),
+                          }))
+                        }
+                        className={`rounded-full border px-3.5 py-2 text-sm ${
+                          on ? "border-ink bg-ink text-cream" : "border-ink/15 bg-white text-ink/60"
+                        }`}
+                      >
+                        {d}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-3 gap-3">
+                <div>
+                  <label className={labelCls}>Opens</label>
+                  <input
+                    type="time"
+                    className={inputCls}
+                    value={dropoff.open_time}
+                    onChange={(e) => setDropoff((p) => ({ ...p, open_time: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className={labelCls}>Closes</label>
+                  <input
+                    type="time"
+                    className={inputCls}
+                    value={dropoff.close_time}
+                    onChange={(e) => setDropoff((p) => ({ ...p, close_time: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className={labelCls}>Slot length</label>
+                  <select
+                    className={inputCls}
+                    value={dropoff.slot_minutes}
+                    onChange={(e) =>
+                      setDropoff((p) => ({ ...p, slot_minutes: Number(e.target.value) }))
+                    }
+                  >
+                    {[10, 15, 20, 30, 60].map((m) => (
+                      <option key={m} value={m}>
+                        {m} min
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="mt-4">
+                <label className={labelCls}>Closed days (no drop-offs)</label>
+                <div className="flex gap-2">
+                  <input
+                    type="date"
+                    className={inputCls}
+                    value={closedDate}
+                    onChange={(e) => setClosedDate(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!/^\d{4}-\d{2}-\d{2}$/.test(closedDate)) return;
+                      setDropoff((p) => ({
+                        ...p,
+                        closed_dates: Array.from(
+                          new Set([...p.closed_dates, closedDate])
+                        ).sort(),
+                      }));
+                      setClosedDate("");
+                    }}
+                    className="shrink-0 rounded-xl bg-ink px-4 text-[15px] text-cream"
+                  >
+                    Add
+                  </button>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {dropoff.closed_dates.length === 0 ? (
+                    <p className="text-sm text-ink/40">No closed days set.</p>
+                  ) : (
+                    dropoff.closed_dates.map((d) => (
+                      <span
+                        key={d}
+                        className="flex items-center gap-1.5 rounded-full bg-blush/40 px-3 py-1 text-sm"
+                      >
+                        {d}
+                        <button
+                          onClick={() =>
+                            setDropoff((p) => ({
+                              ...p,
+                              closed_dates: p.closed_dates.filter((x) => x !== d),
+                            }))
+                          }
+                          className="text-ink/40 hover:text-ink"
+                          aria-label="Remove closed day"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))
+                  )}
                 </div>
               </div>
             </section>

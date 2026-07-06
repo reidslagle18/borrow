@@ -390,6 +390,25 @@ async function createSchema(): Promise<void> {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `;
+  // Consignor drop-off appointments — one booking per slot (unique slot).
+  await sql`
+    CREATE TABLE IF NOT EXISTS drop_off_appointments (
+      id SERIAL PRIMARY KEY,
+      slot_date DATE NOT NULL,
+      slot_time TEXT NOT NULL,
+      name TEXT NOT NULL,
+      phone TEXT,
+      email TEXT,
+      item_count INT NOT NULL DEFAULT 1,
+      customer_id INT REFERENCES customers(id) ON DELETE SET NULL,
+      consignor_id INT REFERENCES consignors(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'booked' CHECK (status IN ('booked','cancelled')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS dropoff_slot_key
+    ON drop_off_appointments(slot_date, slot_time) WHERE status = 'booked'`;
+
   // Allow 'repair' charges (repairable damage — actual repair cost).
   await sql`ALTER TABLE customer_charges DROP CONSTRAINT IF EXISTS customer_charges_kind_check`;
   await sql`ALTER TABLE customer_charges ADD CONSTRAINT customer_charges_kind_check
