@@ -32,7 +32,7 @@ export async function GET() {
      AND r.due_date >= CURRENT_DATE
     WHERE i.status NOT IN ('retired', 'with_consignor')
     GROUP BY i.id
-    ORDER BY array_position(${order}::text[], i.id) NULLS LAST, i.created_at DESC
+    ORDER BY array_position(${order}::text[], i.id) NULLS LAST, i.created_at ASC
   `;
   return NextResponse.json(rows, {
     headers: { "Cache-Control": "no-store" },
