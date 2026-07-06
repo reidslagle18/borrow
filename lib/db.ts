@@ -341,6 +341,9 @@ async function createSchema(): Promise<void> {
   // the customer plus a ledger of grants (+) and redemptions (-). The partial
   // unique index enforces at most one post credit per rental.
   await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS store_credit NUMERIC(10,2) NOT NULL DEFAULT 0`;
+  // Marketing opt-ins from the shop popup (email list + SMS consent timestamp).
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS marketing_signup_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS sms_consent_at TIMESTAMPTZ`;
   await sql`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS store_credit_applied NUMERIC(10,2) NOT NULL DEFAULT 0`;
   await sql`
     CREATE TABLE IF NOT EXISTS store_credit_entries (
