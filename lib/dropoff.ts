@@ -13,7 +13,7 @@ export const DEFAULT_DROPOFF: DropoffConfig = {
   open_days: [1, 2, 3, 4, 5, 6], // Mon–Sat
   open_time: "10:00",
   close_time: "18:00",
-  slot_minutes: 15,
+  slot_minutes: 30,
   closed_dates: [],
 };
 
