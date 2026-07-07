@@ -76,6 +76,9 @@ export async function POST(request: Request) {
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
     customer: stripeCustomerId,
+    // Open on card entry (Apple Pay / Google Pay ride on "card") rather than
+    // defaulting to Stripe Link.
+    payment_method_types: ["card"],
     payment_intent_data: { setup_future_usage: "off_session" },
     line_items: [
       {
