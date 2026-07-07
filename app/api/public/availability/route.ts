@@ -25,7 +25,7 @@ export async function GET() {
       i.event_types, i.photo_url, i.photos, i.status,
       COALESCE(
         json_agg(
-          json_build_object('start_date', r.start_date, 'due_date', (r.due_date + ${buffer}))
+          json_build_object('start_date', r.start_date, 'due_date', (r.due_date + ${buffer}::int))
           ORDER BY r.start_date
         ) FILTER (WHERE r.id IS NOT NULL),
         '[]'

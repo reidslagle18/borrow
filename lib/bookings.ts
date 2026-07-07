@@ -72,7 +72,7 @@ export async function createBooking(b: BookingInput): Promise<BookingResult> {
     WHERE r.item_id = ${b.item_id}
       AND r.status IN ('reserved','active')
       AND r.start_date <= ${b.due_date}
-      AND (r.due_date + ${buffer}) >= ${b.start_date}
+      AND (r.due_date + ${buffer}::int) >= ${b.start_date}
   `;
   if (conflicts.length > 0) {
     return {
