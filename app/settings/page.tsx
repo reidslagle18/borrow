@@ -216,6 +216,25 @@ export default function SettingsPage() {
                   />
                 </div>
               </div>
+              <div className="mt-4 max-w-[16rem]">
+                <label className={labelCls}>Cleaning / turnaround buffer (days)</label>
+                <input
+                  type="number"
+                  min={0}
+                  className={inputCls}
+                  value={program.turnaround_days}
+                  onChange={(e) =>
+                    setProgram((p) => ({
+                      ...p,
+                      turnaround_days: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                    }))
+                  }
+                />
+                <p className="mt-1 text-[12px] text-ink/45">
+                  Days a piece is held after each return before it can be booked
+                  again. Shows as a &quot;cleaning hold&quot; on the calendar.
+                </p>
+              </div>
               <p className="mt-3 text-[12px] text-ink/45">
                 Curators also earn +1 bonus free credit each time a piece they proposed is accepted.
               </p>

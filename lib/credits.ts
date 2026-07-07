@@ -29,6 +29,7 @@ export async function getProgram(): Promise<AmbassadorProgram> {
     terminal_reader_id: v.terminal_reader_id ?? DEFAULT_PROGRAM.terminal_reader_id,
     hanger_fee: v.hanger_fee ?? DEFAULT_PROGRAM.hanger_fee,
     garment_bag_fee: v.garment_bag_fee ?? DEFAULT_PROGRAM.garment_bag_fee,
+    turnaround_days: v.turnaround_days ?? DEFAULT_PROGRAM.turnaround_days,
   };
 }
 

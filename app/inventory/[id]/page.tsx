@@ -78,6 +78,7 @@ export default function PieceDetailPage() {
   const [loadError, setLoadError] = useState("");
   const [activePhoto, setActivePhoto] = useState(0);
   const [editing, setEditing] = useState(false);
+  const [buffer, setBuffer] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -89,6 +90,11 @@ export default function PieceDetailPage() {
         if (!ir.ok) throw new Error(`item ${ir.status}`);
         setItem(await ir.json());
         if (cr.ok) setConsignors(await cr.json());
+        const sr = await fetch("/api/settings");
+        if (sr.ok) {
+          const s = await sr.json();
+          if (s.program?.turnaround_days != null) setBuffer(Number(s.program.turnaround_days));
+        }
       } catch {
         setLoadError("Couldn't load this piece — it may have been removed.");
       }
@@ -151,6 +157,14 @@ export default function PieceDetailPage() {
                 Edit piece
               </button>
             </div>
+
+            {buffer > 0 && (
+              <p className="mt-3 rounded-xl bg-butter/40 px-4 py-2.5 text-[13px] text-ink/70">
+                {item.status === "cleaning"
+                  ? `In cleaning/turnaround — held ${buffer} day${buffer === 1 ? "" : "s"} after its return before it's bookable again.`
+                  : `Cleaning/turnaround buffer: ${buffer} day${buffer === 1 ? "" : "s"} after each return before this piece is bookable again.`}
+              </p>
+            )}
 
             <div className="mt-8 grid gap-8 md:grid-cols-[minmax(0,2fr)_3fr]">
               {/* Gallery */}

@@ -50,6 +50,7 @@ export async function PUT(request: Request) {
       typeof p.terminal_reader_id === "string" ? p.terminal_reader_id.trim() : "",
     hanger_fee: num(p.hanger_fee, DEFAULT_PROGRAM.hanger_fee),
     garment_bag_fee: num(p.garment_bag_fee, DEFAULT_PROGRAM.garment_bag_fee),
+    turnaround_days: num(p.turnaround_days, DEFAULT_PROGRAM.turnaround_days),
   };
 
   await sql`

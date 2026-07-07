@@ -34,6 +34,7 @@ export default function CalendarPage() {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [bookingOpen, setBookingOpen] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [buffer, setBuffer] = useState(0); // cleaning/turnaround days after a return
 
   const today = todayISO();
 
@@ -66,6 +67,11 @@ export default function CalendarPage() {
       ]);
       if (ir.ok) setItems(await ir.json());
       if (cr.ok) setCustomers(await cr.json());
+      const sr = await fetch("/api/settings");
+      if (sr.ok) {
+        const s = await sr.json();
+        if (s.program?.turnaround_days != null) setBuffer(Number(s.program.turnaround_days));
+      }
     })();
   }, []);
 
@@ -77,16 +83,23 @@ export default function CalendarPage() {
   }, [cursor]);
 
   const byDay = useMemo(() => {
-    const map: Record<string, { pickups: Rental[]; returns: Rental[] }> = {};
+    const map: Record<
+      string,
+      { pickups: Rental[]; returns: Rental[]; buffer: Rental[] }
+    > = {};
+    const at = (day: string) =>
+      (map[day] ??= { pickups: [], returns: [], buffer: [] });
     for (const r of rentals) {
       if (r.status === "cancelled") continue;
       const s = dateOnly(r.start_date);
       const d = dateOnly(r.due_date);
-      (map[s] ??= { pickups: [], returns: [] }).pickups.push(r);
-      (map[d] ??= { pickups: [], returns: [] }).returns.push(r);
+      at(s).pickups.push(r);
+      at(d).returns.push(r);
+      // The days after a return are a cleaning/turnaround hold — not bookable.
+      for (let k = 1; k <= buffer; k++) at(addDays(d, k)).buffer.push(r);
     }
     return map;
-  }, [rentals]);
+  }, [rentals, buffer]);
 
   const outNow = useMemo(
     () =>
@@ -271,6 +284,11 @@ export default function CalendarPage() {
             <span className="flex items-center gap-1.5">
               <span className="h-2.5 w-2.5 rounded-full bg-blush" /> return
             </span>
+            {buffer > 0 && (
+              <span className="flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-full bg-butter" /> cleaning hold
+              </span>
+            )}
           </div>
         </div>
 
@@ -292,6 +310,7 @@ export default function CalendarPage() {
               const ev = byDay[day];
               const nPick = ev?.pickups.length ?? 0;
               const nRet = ev?.returns.length ?? 0;
+              const nBuf = ev?.buffer.length ?? 0;
               const isToday = day === today;
               const isSelected = day === selectedDay;
               return (
@@ -309,7 +328,7 @@ export default function CalendarPage() {
                   >
                     {fromISO(day).getDate()}
                   </span>
-                  {(nPick > 0 || nRet > 0) && (
+                  {(nPick > 0 || nRet > 0 || nBuf > 0) && (
                     <span className="mt-0.5 flex flex-wrap gap-1">
                       {nPick > 0 && (
                         <span className="rounded-full bg-sage px-1.5 py-0.5 text-[10px] leading-none">
@@ -319,6 +338,11 @@ export default function CalendarPage() {
                       {nRet > 0 && (
                         <span className="rounded-full bg-blush px-1.5 py-0.5 text-[10px] leading-none">
                           ↓{nRet}
+                        </span>
+                      )}
+                      {nBuf > 0 && (
+                        <span className="rounded-full bg-butter px-1.5 py-0.5 text-[10px] leading-none text-ink/70">
+                          ⟳{nBuf}
                         </span>
                       )}
                     </span>
@@ -334,7 +358,9 @@ export default function CalendarPage() {
           <div className="mt-5 rounded-2xl bg-lavender/25 p-4 sm:p-5">
             <h3 className="text-xl font-medium">{fmtWeekday(selectedDay)}</h3>
             {!selected ||
-            (selected.pickups.length === 0 && selected.returns.length === 0) ? (
+            (selected.pickups.length === 0 &&
+              selected.returns.length === 0 &&
+              selected.buffer.length === 0) ? (
               <p className="mt-2 text-sm text-ink/50">
                 Nothing scheduled this day.{" "}
                 <button
@@ -366,6 +392,36 @@ export default function CalendarPage() {
                     <div className="space-y-2">
                       {selected.returns.map((r) => (
                         <RentalRow key={`r${r.id}`} r={r} kind="return" />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {selected.buffer.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-xs uppercase tracking-[0.15em] text-ink/50">
+                      Cleaning hold — not bookable
+                    </p>
+                    <div className="space-y-2">
+                      {selected.buffer.map((r) => (
+                        <div
+                          key={`b${r.id}`}
+                          className="flex items-center gap-3 rounded-2xl bg-butter/40 p-3"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[15px]">
+                              <span className="font-serif font-semibold">{r.brand}</span>{" "}
+                              <span className="text-ink/50">
+                                {r.item_id} · {r.size}
+                              </span>
+                            </p>
+                            <p className="text-[13px] text-ink/55">
+                              Turnaround after return {fmtShort(dateOnly(r.due_date))}
+                            </p>
+                          </div>
+                          <span className="shrink-0 rounded-full bg-butter px-2.5 py-1 text-[11px]">
+                            cleaning hold
+                          </span>
+                        </div>
                       ))}
                     </div>
                   </div>

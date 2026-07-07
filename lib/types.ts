@@ -210,6 +210,7 @@ export interface AmbassadorProgram {
   terminal_reader_id: string; // Stripe Terminal reader for in-person tap charges
   hanger_fee: number; // charged if the hanger isn't returned
   garment_bag_fee: number; // charged if the garment bag isn't returned
+  turnaround_days: number; // cleaning/turnaround buffer after a return before re-bookable
 }
 
 export const DEFAULT_PROGRAM: AmbassadorProgram = {
@@ -225,6 +226,7 @@ export const DEFAULT_PROGRAM: AmbassadorProgram = {
   terminal_reader_id: "",
   hanger_fee: 5,
   garment_bag_fee: 15,
+  turnaround_days: 2,
 };
 
 export interface AmbassadorPost {

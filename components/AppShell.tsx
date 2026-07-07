@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV = [
+  { href: "/today", label: "Today", ready: true },
   { href: "/inventory", label: "Inventory", ready: true },
   { href: "/recommended", label: "Recommended", ready: true },
   { href: "/checkout", label: "Checkout", ready: true },
@@ -25,7 +26,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen md:flex">
       {/* Sidebar (desktop / iPad landscape) */}
       <aside className="hidden shrink-0 md:flex md:h-screen md:w-56 md:flex-col md:overflow-y-auto md:border-r md:border-ink/10 md:px-6 md:py-8 lg:sticky lg:top-0">
-        <Link href="/inventory" className="block">
+        <Link href="/today" className="block">
           <span className="font-serif text-3xl italic font-medium tracking-tight">
             BORROW
           </span>
@@ -63,7 +64,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       {/* Top bar (mobile / iPad portrait) */}
       <div className="md:hidden sticky top-0 z-30 border-b border-ink/10 bg-cream/95 backdrop-blur">
         <div className="flex items-center justify-between px-5 pt-4 pb-2">
-          <Link href="/inventory">
+          <Link href="/today">
             <span className="font-serif text-2xl italic font-medium">BORROW</span>
             <span className="ml-2 text-[9px] uppercase tracking-[0.3em] text-ink/45">
               Studio

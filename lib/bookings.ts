@@ -60,6 +60,11 @@ export async function createBooking(b: BookingInput): Promise<BookingResult> {
     };
   }
 
+  // A piece isn't bookable again until turnaround_days after a prior return
+  // (cleaning/turnaround buffer), so extend each existing rental's due date by
+  // the buffer when checking overlaps.
+  const program = await getProgram();
+  const buffer = program.turnaround_days;
   const conflicts = await sql`
     SELECT r.id, r.start_date, r.due_date, c.name AS customer_name
     FROM rentals r
@@ -67,20 +72,20 @@ export async function createBooking(b: BookingInput): Promise<BookingResult> {
     WHERE r.item_id = ${b.item_id}
       AND r.status IN ('reserved','active')
       AND r.start_date <= ${b.due_date}
-      AND r.due_date >= ${b.start_date}
+      AND (r.due_date + ${buffer}) >= ${b.start_date}
   `;
   if (conflicts.length > 0) {
     return {
       ok: false,
       status: 409,
-      error: "This piece is already booked for those dates",
+      error: "This piece is already booked (or in its cleaning buffer) for those dates",
       conflicts,
     };
   }
 
   // The Cleaning & Care Fee is charged when the waiver flag is set; store the
   // actual configured amount so finances reflect it (see app/api/finances).
-  const fee = b.damage_waiver ? (await getProgram()).cleaning_fee : 0;
+  const fee = b.damage_waiver ? program.cleaning_fee : 0;
   const rows = await sql`
     INSERT INTO rentals (
       item_id, customer_id, start_date, due_date, status,
