@@ -5,8 +5,34 @@ import { CONSIGNOR_SHARE } from "@/lib/types";
 import { payoutForCompletedRental, createConsignorLossPayout } from "@/lib/connect";
 import { chargeRenterForRental } from "@/lib/charges";
 import { getProgram } from "@/lib/credits";
+import { getStripe } from "@/lib/stripe";
 
 type Ctx = { params: Promise<{ id: string }> };
+
+/**
+ * Refund a reservation's original card charge (the online Checkout Session's
+ * PaymentIntent). Best-effort; returns whether the refund was issued.
+ */
+async function refundReservation(rentalId: number, sessionId: string | null): Promise<boolean> {
+  const stripe = getStripe();
+  if (!stripe || !sessionId) return false;
+  try {
+    const session = await stripe.checkout.sessions.retrieve(sessionId, {
+      expand: ["payment_intent"],
+    });
+    const pi = session.payment_intent;
+    const piId = typeof pi === "string" ? pi : pi?.id;
+    if (!piId) return false;
+    await stripe.refunds.create(
+      { payment_intent: piId },
+      { idempotencyKey: `cancel_refund_${rentalId}` }
+    );
+    return true;
+  } catch (err) {
+    console.error(`[cancel] refund for rental ${rentalId} failed:`, (err as Error).message);
+    return false;
+  }
+}
 
 /** Re-derive an item's status from its live rentals (never touches cleaning/retired). */
 async function syncItemStatus(itemId: string) {
@@ -30,6 +56,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const rental = existing[0];
+  let cancellation: { outcome: string; amount: number } | null = null;
 
   if (b.action === "pickup") {
     if (rental.status !== "reserved") {
@@ -214,15 +241,56 @@ export async function PATCH(request: Request, ctx: Ctx) {
         { status: 400 }
       );
     }
-    if (rental.status === "active") {
-      // undo the pickup count if cancelling something already out
+
+    // Cancellation policy (applies only to a paid reservation):
+    //  - 48+ hrs before pickup → full refund to the card
+    //  - within 48 hrs → store credit for the amount paid
+    //  - after pickup time / already picked up → no refund, no credit
+    const wasPickedUp = rental.status === "active";
+    const startDate = new Date(rental.start_date).toISOString().slice(0, 10);
+    const hoursUntilPickup =
+      (Date.parse(`${startDate}T12:00:00Z`) - Date.now()) / 3_600_000;
+    const paid = rental.paid === true;
+    const amountPaid =
+      Math.round((Number(rental.rental_price) + Number(rental.cleaning_fee || 0)) * 100) / 100;
+
+    let outcome = "none";
+    let amount = 0;
+    if (paid && !wasPickedUp && hoursUntilPickup >= 48) {
+      const ok = await refundReservation(Number(id), rental.stripe_session_id ?? null);
+      outcome = ok ? "refund" : "refund_failed";
+      amount = amountPaid;
+    } else if (paid && !wasPickedUp && hoursUntilPickup > 0) {
+      // Within 48 hours → store credit instead of a card refund.
+      if (rental.customer_id) {
+        await sql`UPDATE customers SET store_credit = store_credit + ${amountPaid} WHERE id = ${rental.customer_id}`;
+        await sql`
+          INSERT INTO store_credit_entries (customer_id, amount, reason, rental_id)
+          VALUES (${rental.customer_id}, ${amountPaid}, 'cancellation', ${id})
+        `;
+        outcome = "credit";
+        amount = amountPaid;
+      }
+    }
+    // else: no-show / after pickup / unpaid → nothing to return.
+    cancellation = { outcome, amount };
+
+    if (wasPickedUp) {
+      // undo the pickup count; a piece that was out needs cleaning before it's
+      // available again (the turnaround buffer).
       await sql`
-        UPDATE items SET rental_count = GREATEST(rental_count - 1, 0), updated_at = now()
+        UPDATE items SET
+          rental_count = GREATEST(rental_count - 1, 0),
+          status = 'cleaning',
+          updated_at = now()
         WHERE id = ${rental.item_id}
       `;
+      await sql`UPDATE rentals SET status = 'cancelled', updated_at = now() WHERE id = ${id}`;
+    } else {
+      // Reserved but never picked up → release straight back to available.
+      await sql`UPDATE rentals SET status = 'cancelled', updated_at = now() WHERE id = ${id}`;
+      await syncItemStatus(rental.item_id);
     }
-    await sql`UPDATE rentals SET status = 'cancelled', updated_at = now() WHERE id = ${id}`;
-    await syncItemStatus(rental.item_id);
   } else if (b.start_date && b.due_date) {
     // reschedule — re-check overlaps, excluding this booking
     if (b.due_date < b.start_date) {
@@ -264,7 +332,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
     JOIN items i ON i.id = r.item_id
     WHERE r.id = ${id}
   `;
-  return NextResponse.json(rows[0]);
+  return NextResponse.json(cancellation ? { ...rows[0], cancellation } : rows[0]);
 }
 
 // Delete a rental (e.g. clearing out practice/test data). If the piece had been

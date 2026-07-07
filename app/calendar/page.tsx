@@ -128,10 +128,24 @@ export default function CalendarPage() {
       body: JSON.stringify({ action }),
     });
     if (res.ok) {
-      const updated: Rental = await res.json();
+      const updated: Rental & {
+        cancellation?: { outcome: string; amount: number };
+      } = await res.json();
       setRentals((prev) =>
         prev.map((r) => (r.id === updated.id ? updated : r))
       );
+      const c = updated.cancellation;
+      if (c) {
+        const msg =
+          c.outcome === "refund"
+            ? `Canceled — full refund of $${c.amount} issued to the card.`
+            : c.outcome === "refund_failed"
+              ? `Canceled — but the refund didn't go through automatically. Refund $${c.amount} in Stripe.`
+              : c.outcome === "credit"
+                ? `Canceled within 48 hrs — $${c.amount} store credit added to the customer.`
+                : "Canceled — no refund or credit (no-show, after pickup, or unpaid).";
+        window.alert(msg);
+      }
     }
     setBusyId(null);
   }
