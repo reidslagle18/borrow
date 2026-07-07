@@ -30,6 +30,7 @@ export async function getProgram(): Promise<AmbassadorProgram> {
     hanger_fee: v.hanger_fee ?? DEFAULT_PROGRAM.hanger_fee,
     garment_bag_fee: v.garment_bag_fee ?? DEFAULT_PROGRAM.garment_bag_fee,
     turnaround_days: v.turnaround_days ?? DEFAULT_PROGRAM.turnaround_days,
+    sales_tax_rate: v.sales_tax_rate ?? DEFAULT_PROGRAM.sales_tax_rate,
   };
 }
 

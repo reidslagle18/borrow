@@ -20,6 +20,11 @@ export async function PUT(request: Request) {
     const n = Number(v);
     return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
   };
+  // Decimals allowed (e.g. a 9.75% tax rate), clamped to a sane range.
+  const dec = (v: unknown, fallback: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n * 1000) / 1000 : fallback;
+  };
   const dates = Array.isArray(p.blackout_dates)
     ? Array.from(
         new Set(
@@ -51,6 +56,7 @@ export async function PUT(request: Request) {
     hanger_fee: num(p.hanger_fee, DEFAULT_PROGRAM.hanger_fee),
     garment_bag_fee: num(p.garment_bag_fee, DEFAULT_PROGRAM.garment_bag_fee),
     turnaround_days: num(p.turnaround_days, DEFAULT_PROGRAM.turnaround_days),
+    sales_tax_rate: dec(p.sales_tax_rate, DEFAULT_PROGRAM.sales_tax_rate),
   };
 
   await sql`

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { sendReceipt, sendConsignorRentedEmail, ReceiptLine } from "@/lib/email";
-import { CONSIGNOR_SHARE } from "@/lib/types";
+import { CONSIGNOR_SHARE, salesTax } from "@/lib/types";
 import {
   getProgram,
   ensureCurrentPeriod,
@@ -164,7 +164,9 @@ export async function POST(request: Request) {
   const cleaningFee = program.cleaning_fee;
   const subtotal = plan.reduce((s, p) => s + p.charge, 0);
   const waiverTotal = plan.filter((p) => p.waiver).length * cleaningFee;
-  const grossTotal = subtotal + waiverTotal;
+  // Sales tax applies to the rental price only — not the Cleaning & Care Fee.
+  const taxTotal = salesTax(subtotal, program.sales_tax_rate);
+  const grossTotal = subtotal + waiverTotal + taxTotal;
 
   // Apply any store credit the customer has, up to the order total.
   let creditApplied = 0;
@@ -184,11 +186,11 @@ export async function POST(request: Request) {
   // One transaction row for the whole checkout.
   const txRows = await sql`
     INSERT INTO transactions (
-      customer_id, piece_count, subtotal, waiver_total, total, store_credit_applied,
+      customer_id, piece_count, subtotal, waiver_total, tax_total, total, store_credit_applied,
       start_date, due_date, payment_method, payment_status, payment_ref,
       agreement_accepted, agreement_name, agreement_accepted_at, receipt_email
     ) VALUES (
-      ${b.customer_id ?? null}, ${items.length}, ${subtotal}, ${waiverTotal}, ${total},
+      ${b.customer_id ?? null}, ${items.length}, ${subtotal}, ${waiverTotal}, ${taxTotal}, ${total},
       ${creditApplied}, ${b.start_date}, ${b.due_date}, ${paymentMethod},
       ${paymentStatus}, ${b.payment_ref || null},
       true, ${b.agreement_name || null}, now(), ${b.receipt_email || null}
@@ -212,12 +214,12 @@ export async function POST(request: Request) {
     const rentalRows = await sql`
       INSERT INTO rentals (
         item_id, customer_id, start_date, due_date, status,
-        rental_price, damage_waiver, cleaning_fee, source, transaction_id,
+        rental_price, damage_waiver, cleaning_fee, sales_tax, source, transaction_id,
         stripe_customer_id, stripe_payment_method_id, paid
       ) VALUES (
         ${p.item.id}, ${b.customer_id ?? null}, ${b.start_date}, ${b.due_date},
         'active', ${p.charge}, ${p.waiver}, ${p.waiver ? cleaningFee : 0},
-        'checkout', ${tx.id},
+        ${salesTax(p.charge, program.sales_tax_rate)}, 'checkout', ${tx.id},
         ${b.stripe_customer_id || null}, ${b.stripe_payment_method_id || null}, ${!isTerminal}
       )
       RETURNING id

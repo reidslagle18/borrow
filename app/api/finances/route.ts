@@ -28,7 +28,8 @@ export async function GET(request: Request) {
       ? await sql`
           SELECT COUNT(*)::int AS rentals,
                  COALESCE(SUM(rental_price), 0) AS rental_revenue,
-                 COALESCE(SUM(CASE WHEN cleaning_fee > 0 THEN cleaning_fee WHEN damage_waiver THEN 5 ELSE 0 END), 0) AS cleaning_fee_revenue
+                 COALESCE(SUM(CASE WHEN cleaning_fee > 0 THEN cleaning_fee WHEN damage_waiver THEN 5 ELSE 0 END), 0) AS cleaning_fee_revenue,
+                 COALESCE(SUM(sales_tax), 0) AS sales_tax
           FROM rentals
           WHERE status IN ('active','completed')
             AND start_date >= ${from} AND start_date <= ${today}
@@ -36,7 +37,8 @@ export async function GET(request: Request) {
       : await sql`
           SELECT COUNT(*)::int AS rentals,
                  COALESCE(SUM(rental_price), 0) AS rental_revenue,
-                 COALESCE(SUM(CASE WHEN cleaning_fee > 0 THEN cleaning_fee WHEN damage_waiver THEN 5 ELSE 0 END), 0) AS cleaning_fee_revenue
+                 COALESCE(SUM(CASE WHEN cleaning_fee > 0 THEN cleaning_fee WHEN damage_waiver THEN 5 ELSE 0 END), 0) AS cleaning_fee_revenue,
+                 COALESCE(SUM(sales_tax), 0) AS sales_tax
           FROM rentals
           WHERE status IN ('active','completed')
         `;
@@ -63,6 +65,7 @@ export async function GET(request: Request) {
     const cleaning_fee_revenue = Number(r.cleaning_fee_revenue);
     const late_fees = Number(feeAgg[0].late_fees);
     const cleaning_cost = Number(cleaningAgg[0].cleaning_cost);
+    const sales_tax = Number(r.sales_tax);
     const total = rental_revenue + cleaning_fee_revenue + late_fees;
     return {
       rentals: r.rentals,
@@ -70,6 +73,7 @@ export async function GET(request: Request) {
       cleaning_fee_revenue,
       late_fees,
       cleaning_cost,
+      sales_tax, // collected & held to remit — not Borrow revenue
       total,
       net: total - cleaning_cost,
     };

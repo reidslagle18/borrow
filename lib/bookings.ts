@@ -1,6 +1,7 @@
 import { sql } from "@/lib/db";
 import { getProgram } from "@/lib/credits";
 import { getStripe } from "@/lib/stripe";
+import { salesTax } from "@/lib/types";
 import { sendBookingConfirmation } from "@/lib/email";
 import { fmtShort } from "@/lib/dates";
 
@@ -86,14 +87,15 @@ export async function createBooking(b: BookingInput): Promise<BookingResult> {
   // The Cleaning & Care Fee is charged when the waiver flag is set; store the
   // actual configured amount so finances reflect it (see app/api/finances).
   const fee = b.damage_waiver ? program.cleaning_fee : 0;
+  const tax = salesTax(Number(b.rental_price), program.sales_tax_rate);
   const rows = await sql`
     INSERT INTO rentals (
       item_id, customer_id, start_date, due_date, status,
-      rental_price, damage_waiver, cleaning_fee, notes, source,
+      rental_price, damage_waiver, cleaning_fee, sales_tax, notes, source,
       paid, stripe_customer_id, stripe_payment_method_id, stripe_session_id
     ) VALUES (
       ${b.item_id}, ${b.customer_id}, ${b.start_date}, ${b.due_date},
-      'reserved', ${b.rental_price}, ${b.damage_waiver}, ${fee}, ${b.notes}, ${b.source},
+      'reserved', ${b.rental_price}, ${b.damage_waiver}, ${fee}, ${tax}, ${b.notes}, ${b.source},
       ${b.paid ?? false}, ${b.stripe_customer_id ?? null},
       ${b.stripe_payment_method_id ?? null}, ${b.stripe_session_id ?? null}
     )

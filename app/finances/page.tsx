@@ -11,6 +11,7 @@ type Period = {
   cleaning_fee_revenue: number;
   late_fees: number;
   cleaning_cost: number;
+  sales_tax: number;
   total: number;
   net: number;
 };
@@ -84,6 +85,12 @@ function PeriodCard({ title, p }: { title: string; p: Period }) {
           <span>Net</span>
           <span>{money(p.net)}</span>
         </div>
+        {p.sales_tax > 0 && (
+          <div className="mt-1 flex justify-between text-[13px] text-ink/45">
+            <span>Sales tax collected (to remit)</span>
+            <span>{money(p.sales_tax)}</span>
+          </div>
+        )}
       </div>
     </div>
   );

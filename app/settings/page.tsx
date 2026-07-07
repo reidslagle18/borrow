@@ -301,6 +301,36 @@ export default function SettingsPage() {
               </div>
             </section>
 
+            {/* Sales tax */}
+            <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
+              <h2 className="font-serif text-xl italic text-ink/70">Sales tax</h2>
+              <p className="mt-1 text-[13px] text-ink/50">
+                Applied to the rental price at checkout (in-store &amp; online) —
+                not the Cleaning &amp; Care Fee. Set to 0 to turn off. Track what
+                you&apos;ve collected on the Finances page.
+              </p>
+              <div className="mt-3 max-w-[12rem]">
+                <label className={labelCls}>Sales tax rate (%)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.001"
+                  className={inputCls}
+                  value={program.sales_tax_rate}
+                  onChange={(e) =>
+                    setProgram((p) => ({
+                      ...p,
+                      sales_tax_rate: Math.max(0, Number(e.target.value) || 0),
+                    }))
+                  }
+                />
+                <p className="mt-1 text-[12px] text-ink/45">
+                  e.g. Fayetteville is around 9.75% — confirm your exact combined rate.
+                </p>
+              </div>
+            </section>
+
             {/* Drop-off appointment window */}
             <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
               <h2 className="font-serif text-xl italic text-ink/70">

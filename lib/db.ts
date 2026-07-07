@@ -219,6 +219,7 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE transactions DROP CONSTRAINT IF EXISTS transactions_payment_status_check`;
   await sql`ALTER TABLE transactions ADD CONSTRAINT transactions_payment_status_check
     CHECK (payment_status IN ('collected','pending','void','refunded'))`;
+  await sql`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tax_total NUMERIC(10,2) NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS refund_amount NUMERIC(10,2) NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ`;
   await sql`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS stripe_refund_id TEXT`;
@@ -377,6 +378,8 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS damage_kind TEXT`;
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS repair_cost NUMERIC(10,2) NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS replacement_value NUMERIC(10,2)`;
+  // Sales tax collected on this rental's rental price (not the cleaning fee).
+  await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS sales_tax NUMERIC(10,2) NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS paid BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE rentals ADD COLUMN IF NOT EXISTS stripe_session_id TEXT`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS rentals_stripe_session_key ON rentals(stripe_session_id) WHERE stripe_session_id IS NOT NULL`;

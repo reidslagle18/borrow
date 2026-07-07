@@ -211,6 +211,12 @@ export interface AmbassadorProgram {
   hanger_fee: number; // charged if the hanger isn't returned
   garment_bag_fee: number; // charged if the garment bag isn't returned
   turnaround_days: number; // cleaning/turnaround buffer after a return before re-bookable
+  sales_tax_rate: number; // % applied to the rental price (NOT the cleaning fee)
+}
+
+/** Sales tax on a taxable base, given a percent rate; rounded to cents. */
+export function salesTax(base: number, ratePct: number): number {
+  return Math.round(Number(base) * Number(ratePct)) / 100;
 }
 
 export const DEFAULT_PROGRAM: AmbassadorProgram = {
@@ -227,6 +233,7 @@ export const DEFAULT_PROGRAM: AmbassadorProgram = {
   hanger_fee: 5,
   garment_bag_fee: 15,
   turnaround_days: 2,
+  sales_tax_rate: 0,
 };
 
 export interface AmbassadorPost {

@@ -3,6 +3,7 @@ import { sql, ensureSchema } from "@/lib/db";
 import { getStripe, ensureStripeCustomer } from "@/lib/stripe";
 import { getProgram } from "@/lib/credits";
 import { findOrCreateCustomer } from "@/lib/bookings";
+import { salesTax } from "@/lib/types";
 
 /**
  * Creates a Stripe Checkout Session so a customer can pay the full amount
@@ -69,9 +70,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Couldn't set up payment" }, { status: 500 });
   }
 
-  const cleaningFee = (await getProgram()).cleaning_fee;
+  const program = await getProgram();
+  const cleaningFee = program.cleaning_fee;
   const rentalCents = Math.round(Number(item.rental_price) * 100);
   const feeCents = Math.round(cleaningFee * 100);
+  // Sales tax on the rental price only (not the cleaning fee).
+  const taxCents = Math.round(salesTax(Number(item.rental_price), program.sales_tax_rate) * 100);
 
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
@@ -97,6 +101,18 @@ export async function POST(request: Request) {
           product_data: { name: "Cleaning & Care Fee" },
         },
       },
+      ...(taxCents > 0
+        ? [
+            {
+              quantity: 1,
+              price_data: {
+                currency: "usd" as const,
+                unit_amount: taxCents,
+                product_data: { name: "Sales tax" },
+              },
+            },
+          ]
+        : []),
     ],
     metadata: {
       item_id: String(b.item_id),

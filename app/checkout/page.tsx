@@ -16,6 +16,7 @@ import {
   Item,
   Customer,
   CLEANING_FEE_DEFAULT,
+  salesTax,
   RENTAL_DAYS,
   AGREEMENT_TERMS,
   tierLabel,
@@ -90,6 +91,7 @@ function CheckoutInner() {
   const [cleaningFee, setCleaningFee] = useState<number>(CLEANING_FEE_DEFAULT);
   const [hangerFee, setHangerFee] = useState(0);
   const [bagFee, setBagFee] = useState(0);
+  const [taxRate, setTaxRate] = useState(0);
   // Terminal readers are looked up live from Stripe (never a stored id, which
   // could be from the wrong mode). null = still loading.
   const [readers, setReaders] = useState<TerminalReader[] | null>(null);
@@ -135,6 +137,7 @@ function CheckoutInner() {
           if (s.program?.cleaning_fee != null) setCleaningFee(s.program.cleaning_fee);
           if (s.program?.hanger_fee != null) setHangerFee(Number(s.program.hanger_fee));
           if (s.program?.garment_bag_fee != null) setBagFee(Number(s.program.garment_bag_fee));
+          if (s.program?.sales_tax_rate != null) setTaxRate(Number(s.program.sales_tax_rate));
           if (s.program?.terminal_reader_id) settingsPref = s.program.terminal_reader_id;
         }
         // Resolve the reader from the LIVE list: prefer the one remembered on
@@ -234,7 +237,8 @@ function CheckoutInner() {
 
   const subtotal = selected.reduce((s, i) => s + Number(i.rental_price), 0);
   const waiverTotal = selected.length * cleaningFee;
-  const total = subtotal + waiverTotal;
+  const taxTotal = salesTax(subtotal, taxRate); // rental only, not cleaning fee
+  const total = subtotal + waiverTotal + taxTotal;
 
   function addPiece(item: Item): { ok: boolean; msg: string } {
     if (selectedIds.includes(item.id)) {
@@ -1046,6 +1050,12 @@ function CheckoutInner() {
             </span>
             <span>{money(waiverTotal)}</span>
           </div>
+          {taxTotal > 0 && (
+            <div className="mt-1.5 flex justify-between text-sm text-ink/60">
+              <span>Sales tax ({taxRate}%)</span>
+              <span>{money(taxTotal)}</span>
+            </div>
+          )}
           <div className="mt-3 flex justify-between border-t border-ink/10 pt-3 text-lg font-medium">
             <span>Total</span>
             <span>{money(total)}</span>
