@@ -7,6 +7,26 @@
     {
       "path": "/api/cron/late-fees",
       "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/cron/payout-sweep",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/pickup-lifecycle",
+      "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cron/approval-notifications",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/stripe-fees",
+      "schedule": "30 16 * * *"
+    },
+    {
+      "path": "/api/cron/ecloset-settle",
+      "schedule": "0 17 * * *"
     }
   ]
 }

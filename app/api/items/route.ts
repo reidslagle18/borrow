@@ -1,12 +1,18 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema, nextItemId } from "@/lib/db";
 import { getProgram } from "@/lib/credits";
-import { replacementDefault } from "@/lib/types";
+import { replacementDefault, cleanStyleTags, cleanOccasionTags } from "@/lib/types";
+import { linkItemsIntoSet } from "@/lib/sets";
 
 export async function GET() {
   await ensureSchema();
   const rows = await sql`
-    SELECT i.*, c.name AS consignor_name, a.name AS ambassador_name
+    SELECT i.*, c.name AS consignor_name, a.name AS ambassador_name,
+      to_char(
+        (SELECT MIN(r.start_date) FROM rentals r
+          WHERE r.item_id = i.id AND r.status = 'reserved' AND r.start_date >= (now() AT TIME ZONE 'America/Chicago')::date),
+        'YYYY-MM-DD'
+      ) AS next_reservation_date
     FROM items i
     LEFT JOIN consignors c ON c.id = i.consignor_id
     LEFT JOIN ambassadors a ON a.id = i.ambassador_id
@@ -41,24 +47,34 @@ export async function POST(request: Request) {
   const sentRepl = ceilOrNull(b.replacement_value);
   const replacementManual = b.replacement_value_manual === true && sentRepl != null;
   const replacement = replacementManual ? (sentRepl as number) : replDefault;
+
+  // Consignment pieces enter "Pending Consignor Approval" — staff can keep
+  // editing; the piece only goes live once the consignor approves (enforced at
+  // the shop feed + booking layer, so saving here is never blocked).
+  const ownership = b.ownership || "owned";
+  const desiredStatus = b.status || "available";
+  const approvalStatus = ownership === "consignment" ? "pending" : null;
+  const styleTags = cleanStyleTags(b.style_tags);
+  const occasionTags = cleanOccasionTags(b.occasion_tags);
+  const subOccasionTags = cleanOccasionTags(b.sub_occasion_tags);
   try {
     const rows = await sql`
       INSERT INTO items (
         id, barcode, name, brand, description, size, color, fabric, fit_notes,
-        silhouette, new_with_tags, ambassador_id, tier, rental_price, purchase_cost,
-        retail_value, replacement_value, replacement_value_manual,
+        silhouette, style_tags, occasion_tags, sub_occasion_tags, new_with_tags, ambassador_id, tier, rental_price, purchase_cost,
+        retail_value, replacement_value, replacement_value_manual, approval_status,
         acquisition_date, source, condition_notes, ownership,
         consignor_id, event_types, status, location, photo_url, photos
       ) VALUES (
         ${id}, ${String(b.barcode).trim()}, ${b.name || null}, ${b.brand}, ${b.description || null},
         ${b.size}, ${b.color || null}, ${b.fabric || null}, ${b.fit_notes || null},
-        ${b.silhouette || null}, ${!!b.new_with_tags}, ${b.ambassador_id ?? null},
+        ${b.silhouette || null}, ${styleTags}, ${occasionTags}, ${subOccasionTags}, ${!!b.new_with_tags}, ${b.ambassador_id ?? null},
         ${b.tier}, ${rentalPrice},
-        ${purchaseCost}, ${retailValue}, ${replacement}, ${replacementManual},
+        ${purchaseCost}, ${retailValue}, ${replacement}, ${replacementManual}, ${approvalStatus},
         ${b.acquisition_date || null}, ${b.source || null},
-        ${b.condition_notes || null}, ${b.ownership || "owned"},
-        ${b.ownership === "consignment" ? b.consignor_id ?? null : null},
-        ${b.event_types ?? []}, ${b.status || "available"}, ${b.location || null},
+        ${b.condition_notes || null}, ${ownership},
+        ${ownership === "consignment" ? b.consignor_id ?? null : null},
+        ${b.event_types ?? []}, ${desiredStatus}, ${b.location || null},
         ${cover}, ${photos}
       )
       RETURNING *
@@ -76,6 +92,15 @@ export async function POST(request: Request) {
         VALUES (${b.consignor_id}, ${fee}, 'initial', ${rows[0].id}, 'Initial clean before listing')
       `;
     }
+    // Link into a matching set if a partner piece was chosen.
+    if (b.set_partner_id) {
+      const group = await linkItemsIntoSet(rows[0].id, String(b.set_partner_id));
+      if (group) rows[0].set_group = group;
+    }
+    // The piece is left with approval_notified_at = NULL. The approval-
+    // notifications cron is the single guaranteed sender: it batches every new
+    // pending piece for a consignor into ONE email once their window closes, so
+    // intake never has to (and can't accidentally skip) emailing them here.
     return NextResponse.json(rows[0], { status: 201 });
   } catch (err) {
     if ((err as { code?: string }).code === "23505") {

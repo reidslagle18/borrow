@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
-import { sendConsignorRentedEmail } from "@/lib/email";
-import { CONSIGNOR_SHARE } from "@/lib/types";
+import {
+  sendConsignorRentedEmail,
+  sendBookingConfirmation,
+  sendConsignorNoShowNotice,
+} from "@/lib/email";
+import { consignorShare, openDaysLate } from "@/lib/types";
+import { fmtShort } from "@/lib/dates";
 import { payoutForCompletedRental, createConsignorLossPayout } from "@/lib/connect";
-import { chargeRenterForRental } from "@/lib/charges";
+import { chargeRenterForRental, refundLateFeesForRental } from "@/lib/charges";
 import { getProgram } from "@/lib/credits";
 import { getStripe } from "@/lib/stripe";
 
@@ -13,23 +18,54 @@ type Ctx = { params: Promise<{ id: string }> };
  * Refund a reservation's original card charge (the online Checkout Session's
  * PaymentIntent). Best-effort; returns whether the refund was issued.
  */
-async function refundReservation(rentalId: number, sessionId: string | null): Promise<boolean> {
+/**
+ * Refund the RENTAL PRICE ONLY (the Cleaning & Care Fee and tax are
+ * non-refundable) for a cancelled reservation. Finds the card charge from the
+ * online checkout session, or — for in-store/terminal orders — the PaymentIntent
+ * stored on the rental's transaction. Partial refund, idempotent per rental.
+ */
+async function refundRentalPrice(rental: {
+  id: number;
+  rental_price: number | string;
+  stripe_session_id: string | null;
+  transaction_id: number | null;
+}): Promise<boolean> {
   const stripe = getStripe();
-  if (!stripe || !sessionId) return false;
+  if (!stripe) return false;
+  const amountCents = Math.round(Number(rental.rental_price) * 100);
+  if (amountCents <= 0) return false;
   try {
-    const session = await stripe.checkout.sessions.retrieve(sessionId, {
-      expand: ["payment_intent"],
-    });
-    const pi = session.payment_intent;
-    const piId = typeof pi === "string" ? pi : pi?.id;
+    let piId: string | null = null;
+    if (rental.stripe_session_id) {
+      const session = await stripe.checkout.sessions.retrieve(rental.stripe_session_id, {
+        expand: ["payment_intent"],
+      });
+      const pi = session.payment_intent;
+      piId = typeof pi === "string" ? pi : pi?.id ?? null;
+    } else if (rental.transaction_id) {
+      const tx = (
+        await sql`SELECT payment_ref FROM transactions WHERE id = ${rental.transaction_id}`
+      )[0];
+      const ref = tx?.payment_ref;
+      if (typeof ref === "string" && ref.startsWith("pi_")) piId = ref;
+    }
     if (!piId) return false;
     await stripe.refunds.create(
-      { payment_intent: piId },
-      { idempotencyKey: `cancel_refund_${rentalId}` }
+      { payment_intent: piId, amount: amountCents },
+      { idempotencyKey: `cancel_refund_${rental.id}` }
     );
+    // Record the refund on the transaction so Finances (Net Take) sees it.
+    if (rental.transaction_id) {
+      await sql`
+        UPDATE transactions
+        SET refund_amount = COALESCE(refund_amount, 0) + ${amountCents / 100},
+            refunded_at = COALESCE(refunded_at, now())
+        WHERE id = ${rental.transaction_id}
+      `.catch(() => {});
+    }
     return true;
   } catch (err) {
-    console.error(`[cancel] refund for rental ${rentalId} failed:`, (err as Error).message);
+    console.error(`[cancel] refund for rental ${rental.id} failed:`, (err as Error).message);
     return false;
   }
 }
@@ -58,6 +94,92 @@ export async function PATCH(request: Request, ctx: Ctx) {
   const rental = existing[0];
   let cancellation: { outcome: string; amount: number } | null = null;
 
+  // Re-send the reservation confirmation email with the rental's CURRENT dates
+  // (e.g. after correcting a booking). Uses the piece brand + customer on file.
+  if (b.action === "resend_confirmation") {
+    const info = (
+      await sql`
+        SELECT COALESCE(NULLIF(i.name, ''), i.brand) AS brand,
+               cu.name AS customer_name, cu.email AS customer_email,
+               COALESCE(t.total, r.rental_price) AS total,
+               to_char(r.start_date, 'YYYY-MM-DD') AS start_iso,
+               to_char(r.due_date, 'YYYY-MM-DD') AS due_iso
+        FROM rentals r
+        JOIN items i ON i.id = r.item_id
+        LEFT JOIN customers cu ON cu.id = r.customer_id
+        LEFT JOIN transactions t ON t.id = r.transaction_id
+        WHERE r.id = ${id}
+      `
+    )[0];
+    if (!info?.customer_email) {
+      return NextResponse.json(
+        { error: "No email on file for this rental's customer." },
+        { status: 400 }
+      );
+    }
+    const r = await sendBookingConfirmation({
+      to: info.customer_email,
+      customerName: info.customer_name || "",
+      brand: info.brand,
+      startDate: fmtShort(info.start_iso),
+      dueDate: fmtShort(info.due_iso),
+      total: Number(info.total),
+    });
+    if (!r.sent) {
+      return NextResponse.json(
+        { error: "Couldn't send the email (is email configured?)." },
+        { status: 502 }
+      );
+    }
+    return NextResponse.json({ ok: true, sent: true, to: info.customer_email });
+  }
+
+  // Mark a reserved piece as physically pulled into the holding area (or undo).
+  // Lets the Today / Pull List clear what's done so only NEW reservations show.
+  if (b.action === "pull") {
+    await sql`UPDATE rentals SET pulled_at = now(), updated_at = now() WHERE id = ${id}`;
+    return NextResponse.json({ ok: true, pulled: true });
+  }
+  if (b.action === "unpull") {
+    await sql`UPDATE rentals SET pulled_at = NULL, updated_at = now() WHERE id = ${id}`;
+    return NextResponse.json({ ok: true, pulled: false });
+  }
+
+  if (b.action === "refund_late_fee") {
+    // Manually reverse late fees auto-charged on this rental (any time after the
+    // fact). Refunds every collected late-fee charge back to the card, voids any
+    // uncollected ones, and zeroes the recorded fee.
+    const r = await refundLateFeesForRental(Number(id), 0);
+    if (r.error) {
+      return NextResponse.json({ error: `Couldn't refund: ${r.error}` }, { status: 400 });
+    }
+    await sql`UPDATE rentals SET late_fee = 0, updated_at = now() WHERE id = ${id}`;
+    return NextResponse.json({ ok: true, refunded: r.refunded, charges: r.count });
+  }
+
+  if (b.action === "ship") {
+    // e.closet order shipped out to the renter: reserved → active (out). The
+    // consignor was already emailed when the order was logged, so no email here;
+    // the settle cron pays them on the return date.
+    if (rental.status !== "reserved") {
+      return NextResponse.json(
+        { error: "Only an awaiting-shipment order can be marked shipped" },
+        { status: 400 }
+      );
+    }
+    await sql`UPDATE rentals SET status = 'active', updated_at = now() WHERE id = ${id}`;
+    await sql`
+      UPDATE items SET status = 'rented', rental_count = rental_count + 1, updated_at = now()
+      WHERE id = ${rental.item_id} AND status IN ('reserved', 'available')
+    `;
+    const updated = await sql`
+      SELECT r.*, c.name AS customer_name, COALESCE(NULLIF(i.name, ''), i.brand) AS brand,
+             i.size, i.color, i.photo_url, i.ownership
+      FROM rentals r LEFT JOIN customers c ON c.id = r.customer_id
+      JOIN items i ON i.id = r.item_id WHERE r.id = ${id}`;
+    return NextResponse.json(updated[0]);
+  }
+
   if (b.action === "pickup") {
     if (rental.status !== "reserved") {
       return NextResponse.json(
@@ -72,7 +194,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
     `;
     // Notify the consignor (free email, best-effort) when their piece goes out.
     const consigned = await sql`
-      SELECT COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.rental_price, c.name, c.email, c.portal_code
+      SELECT COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.rental_price, c.name, c.email, c.portal_code, c.consignor_rate
       FROM items i JOIN consignors c ON c.id = i.consignor_id
       WHERE i.id = ${rental.item_id} AND i.ownership = 'consignment'
         AND c.email IS NOT NULL
@@ -83,16 +205,34 @@ export async function PATCH(request: Request, ctx: Ctx) {
         to: c.email,
         consignorName: c.name,
         brand: c.brand,
-        earned: Math.round(Number(rental.rental_price) * CONSIGNOR_SHARE * 100) / 100,
+        earned: Math.round(Number(rental.rental_price) * consignorShare(c.consignor_rate) * 100) / 100,
         portalCode: c.portal_code ?? null,
       });
     }
   } else if (b.action === "return") {
     if (rental.status !== "active") {
-      return NextResponse.json(
-        { error: "Only pieces that are out can be checked in" },
-        { status: 400 }
-      );
+      // Safety net: a piece whose pickup was never confirmed is still 'reserved'
+      // and would otherwise be un-checkable. With force=true, backfill the missed
+      // pickup (mark it out, count the rental) so the return can complete and the
+      // consignor payout still fires — rather than blocking staff.
+      if (b.force === true && rental.status === "reserved") {
+        await sql`UPDATE rentals SET status = 'active', updated_at = now() WHERE id = ${id}`;
+        await sql`
+          UPDATE items SET status = 'rented', rental_count = rental_count + 1, updated_at = now()
+          WHERE id = ${rental.item_id} AND status <> 'rented'
+        `;
+        rental.status = "active";
+      } else {
+        return NextResponse.json(
+          {
+            error:
+              rental.status === "reserved"
+                ? "This piece's pickup was never confirmed — use Force check-in to complete the return."
+                : "Only pieces that are out can be checked in",
+          },
+          { status: 400 }
+        );
+      }
     }
     const returnedDate: string = b.returned_date;
     if (!returnedDate) {
@@ -103,11 +243,14 @@ export async function PATCH(request: Request, ctx: Ctx) {
     }
     // due_date may arrive as a JS Date or a string depending on the driver
     const due = new Date(rental.due_date).toISOString().slice(0, 10);
-    const daysLate = Math.max(
-      0,
-      Math.round(
-        (Date.parse(returnedDate) - Date.parse(due)) / 86_400_000
-      )
+    // Late fee only accrues on days the studio was OPEN (closed weekdays and
+    // one-off closed dates don't count — the piece couldn't be returned then).
+    const prog = await getProgram();
+    const daysLate = openDaysLate(
+      due,
+      returnedDate,
+      prog.store_closed_dates,
+      prog.store_closed_weekdays
     );
     // $15/day past the rental window — owner can override (e.g. waive it)
     const lateFee =
@@ -151,6 +294,12 @@ export async function PATCH(request: Request, ctx: Ctx) {
         updated_at = now()
       WHERE id = ${id}
     `;
+
+    // If the daily job already auto-charged more late fees than the final amount
+    // (e.g. staff waived it to $0 or lowered it at check-in), refund the excess
+    // back to the renter's card automatically — waiving now actually gives the
+    // money back instead of just zeroing the number.
+    await refundLateFeesForRental(Number(id), lateFee);
 
     if (damageKind === "loss") {
       // Total loss / not returned → retire the piece out of inventory.
@@ -243,36 +392,24 @@ export async function PATCH(request: Request, ctx: Ctx) {
     }
 
     // Cancellation policy (applies only to a paid reservation):
-    //  - 48+ hrs before pickup → full refund to the card
-    //  - within 48 hrs → store credit for the amount paid
-    //  - after pickup time / already picked up → no refund, no credit
+    //  - 48+ hrs before pickup → refund the RENTAL PRICE to the card
+    //    (Cleaning & Care Fee and tax are non-refundable)
+    //  - within 48 hrs / after pickup / no-show → non-refundable (nothing back)
     const wasPickedUp = rental.status === "active";
     const startDate = new Date(rental.start_date).toISOString().slice(0, 10);
     const hoursUntilPickup =
       (Date.parse(`${startDate}T12:00:00Z`) - Date.now()) / 3_600_000;
     const paid = rental.paid === true;
-    const amountPaid =
-      Math.round((Number(rental.rental_price) + Number(rental.cleaning_fee || 0)) * 100) / 100;
+    const rentalPrice = Math.round(Number(rental.rental_price) * 100) / 100;
 
     let outcome = "none";
     let amount = 0;
     if (paid && !wasPickedUp && hoursUntilPickup >= 48) {
-      const ok = await refundReservation(Number(id), rental.stripe_session_id ?? null);
+      const ok = await refundRentalPrice(rental);
       outcome = ok ? "refund" : "refund_failed";
-      amount = amountPaid;
-    } else if (paid && !wasPickedUp && hoursUntilPickup > 0) {
-      // Within 48 hours → store credit instead of a card refund.
-      if (rental.customer_id) {
-        await sql`UPDATE customers SET store_credit = store_credit + ${amountPaid} WHERE id = ${rental.customer_id}`;
-        await sql`
-          INSERT INTO store_credit_entries (customer_id, amount, reason, rental_id)
-          VALUES (${rental.customer_id}, ${amountPaid}, 'cancellation', ${id})
-        `;
-        outcome = "credit";
-        amount = amountPaid;
-      }
+      amount = rentalPrice;
     }
-    // else: no-show / after pickup / unpaid → nothing to return.
+    // else: within 48 hrs / no-show / after pickup / unpaid → non-refundable.
     cancellation = { outcome, amount };
 
     if (wasPickedUp) {
@@ -290,6 +427,33 @@ export async function PATCH(request: Request, ctx: Ctx) {
       // Reserved but never picked up → release straight back to available.
       await sql`UPDATE rentals SET status = 'cancelled', updated_at = now() WHERE id = ${id}`;
       await syncItemStatus(rental.item_id);
+
+      // Genuine no-show (the pickup day already passed): tell the consignor their
+      // piece was never picked up so no payout is coming — right when it's
+      // released, not only via the nightly job. Once, guarded by noshow_notified
+      // so the cron can't also send it. Best-effort; the release already happened.
+      if (hoursUntilPickup < 0 && !rental.noshow_notified) {
+        try {
+          const c = (
+            await sql`
+              SELECT co.name, co.email, COALESCE(NULLIF(i.name, ''), i.brand) AS brand
+              FROM items i
+              LEFT JOIN consignors co ON co.id = i.consignor_id
+              WHERE i.id = ${rental.item_id} AND i.ownership = 'consignment'
+            `
+          )[0];
+          if (c?.email) {
+            await sendConsignorNoShowNotice({
+              to: String(c.email),
+              consignorName: String(c.name ?? ""),
+              itemBrand: String(c.brand),
+            });
+          }
+          await sql`UPDATE rentals SET noshow_notified = true WHERE id = ${id}`;
+        } catch {
+          /* non-fatal — the piece is already back on the rack */
+        }
+      }
     }
   } else if (b.start_date && b.due_date) {
     // reschedule — re-check overlaps, excluding this booking

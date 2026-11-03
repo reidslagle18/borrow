@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { getStripe } from "@/lib/stripe";
-import { getOrCreateConnectedAccount, createOnboardingLink } from "@/lib/connect";
+import { getOrCreateConnectedAccount } from "@/lib/connect";
 import { sendConsignorWelcome } from "@/lib/email";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -14,7 +14,7 @@ export async function POST(request: Request, ctx: Ctx) {
   await ensureSchema();
   const { id } = await ctx.params;
   const c = (
-    await sql`SELECT id, name, email, stripe_account_id, payouts_enabled FROM consignors WHERE id = ${id}`
+    await sql`SELECT id, name, email, stripe_account_id, payouts_enabled, portal_code, consignor_rate FROM consignors WHERE id = ${id}`
   )[0];
   if (!c) {
     return NextResponse.json({ error: "Consignor not found" }, { status: 404 });
@@ -26,27 +26,26 @@ export async function POST(request: Request, ctx: Ctx) {
     );
   }
 
-  let onboardingUrl: string | null = null;
+  // Ensure their connected account exists, then link the welcome to the STABLE
+  // onboarding endpoint (mints a fresh Stripe link on click — never expires).
   const origin = new URL(request.url).origin;
   const stripe = getStripe();
   if (stripe && !c.payouts_enabled) {
     try {
-      const accountId = await getOrCreateConnectedAccount(stripe, c);
-      onboardingUrl = await createOnboardingLink(
-        stripe,
-        accountId,
-        `${origin}/connect/return?status=done`,
-        `${origin}/connect/return?status=refresh`
-      );
+      await getOrCreateConnectedAccount(stripe, c);
     } catch (err) {
-      console.error("[welcome] Connect link failed:", (err as Error).message);
+      console.error("[welcome] Connect setup failed:", (err as Error).message);
     }
   }
+  const onboardingUrl = c.portal_code
+    ? `${origin}/api/public/connect-start?code=${encodeURIComponent(c.portal_code)}`
+    : null;
 
   const r = await sendConsignorWelcome({
     to: c.email,
     consignorName: c.name,
     onboardingUrl,
+    rate: c.consignor_rate ?? undefined,
   });
   if (r.sent) {
     await sql`UPDATE consignors SET welcome_sent_at = now() WHERE id = ${id}`;

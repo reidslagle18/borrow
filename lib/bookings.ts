@@ -1,9 +1,34 @@
 import { sql } from "@/lib/db";
 import { getProgram } from "@/lib/credits";
 import { getStripe } from "@/lib/stripe";
-import { salesTax } from "@/lib/types";
+import { salesTax, lastSafeRentalLeadDays, closedPickupDate, nextOpenDate } from "@/lib/types";
 import { sendBookingConfirmation } from "@/lib/email";
 import { fmtShort } from "@/lib/dates";
+
+/**
+ * Protects confirmed future reservations. If a NEW rental starting on
+ * `startDate` would fall past the Last Safe Rental Date of any reservation on
+ * this piece (i.e. it might not be back, cleaned, and ready in time), returns
+ * that reservation's pickup date (YYYY-MM-DD) so the caller can block it. Before
+ * the cutoff the piece is fully bookable, so returns null.
+ */
+export async function reservationCutoffConflict(
+  itemId: string,
+  startDate: string,
+  program: { reservation_protect_days: number }
+): Promise<string | null> {
+  const lead = lastSafeRentalLeadDays(program);
+  const rows = await sql`
+    SELECT to_char(MIN(r.start_date), 'YYYY-MM-DD') AS pickup
+    FROM rentals r
+    WHERE r.item_id = ${itemId}
+      AND r.status = 'reserved'
+      AND r.start_date >= (now() AT TIME ZONE 'America/Chicago')::date
+      AND ${startDate}::date > (r.start_date - ${lead}::int)
+      AND ${startDate}::date <= r.start_date
+  `;
+  return rows[0]?.pickup ?? null;
+}
 
 export interface BookingInput {
   item_id: string;
@@ -19,6 +44,8 @@ export interface BookingInput {
   stripe_customer_id?: string | null;
   stripe_payment_method_id?: string | null;
   stripe_session_id?: string | null;
+  /** Give-back campaign tag (already validated active for the payment date). */
+  campaign_code?: string | null;
 }
 
 export type BookingResult =
@@ -46,7 +73,7 @@ export async function createBooking(b: BookingInput): Promise<BookingResult> {
     };
   }
 
-  const item = await sql`SELECT id, status FROM items WHERE id = ${b.item_id}`;
+  const item = await sql`SELECT id, status, hold_start, hold_end FROM items WHERE id = ${b.item_id}`;
   if (item.length === 0) {
     return { ok: false, status: 404, error: "Piece not found" };
   }
@@ -60,12 +87,101 @@ export async function createBooking(b: BookingInput): Promise<BookingResult> {
       error: "This piece is out with its consignor right now",
     };
   }
+  // Held off the shop while it's being cleaned after a return, until staff tap
+  // "Back on rack" (which flips it back to 'available').
+  if (item[0].status === "cleaning") {
+    return {
+      ok: false,
+      status: 400,
+      error: "This piece just came back and is being cleaned — it'll be available again soon.",
+    };
+  }
+  if (item[0].status === "consignor_hold") {
+    return {
+      ok: false,
+      status: 400,
+      error: "This piece is on hold with its consignor right now",
+    };
+  }
+  // A consignor self-hold blocks its requested date range: no booking may
+  // overlap [hold_start, hold_end]. (Once the hold begins the piece flips to
+  // 'consignor_hold' status above and is off the calendar entirely until it's
+  // manually marked returned — this guards the window before it activates.)
+  if (item[0].hold_start) {
+    const hStart = new Date(item[0].hold_start).toISOString().slice(0, 10);
+    const hEnd = item[0].hold_end
+      ? new Date(item[0].hold_end).toISOString().slice(0, 10)
+      : hStart;
+    if (b.start_date.slice(0, 10) <= hEnd && b.due_date.slice(0, 10) >= hStart) {
+      return {
+        ok: false,
+        status: 409,
+        error: `This piece is on hold for its consignor ${hStart} – ${hEnd} and can't be booked across those dates.`,
+      };
+    }
+  }
+
+  // Consignment pieces can't be booked until the consignor has approved the
+  // agreed value AND their whole drop-off batch is cleared.
+  const gate = await sql`
+    SELECT i.ownership, i.approval_status, i.turnaround_override,
+      (SELECT COUNT(*)::int FROM items s
+        WHERE s.consignor_id = i.consignor_id
+          AND s.approval_status IN ('pending','disputed')) AS pending_siblings
+    FROM items i WHERE i.id = ${b.item_id}
+  `;
+  if (
+    gate[0]?.ownership === "consignment" &&
+    (gate[0].approval_status !== "approved" || Number(gate[0].pending_siblings) > 0)
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      error: "This piece isn't available yet — it's awaiting consignor approval.",
+    };
+  }
+
+  const program = await getProgram();
+
+  // The studio can't hand a piece over on a closed day, so a closed PICKUP is
+  // blocked. A closed RETURN is fine — roll the due date forward to the next
+  // open day (the renter brings it back then), at no penalty.
+  const closedPickup = closedPickupDate(
+    b.start_date,
+    program.store_closed_dates,
+    program.store_closed_weekdays
+  );
+  if (closedPickup) {
+    return {
+      ok: false,
+      status: 409,
+      error: `The studio is closed on ${closedPickup}, so a pickup can't happen that day. Please choose a different pickup date.`,
+    };
+  }
+  b.due_date = nextOpenDate(b.due_date, program.store_closed_dates, program.store_closed_weekdays);
+
+  // Customer-site reservations can't be picked up before the launch date.
+  // Studio staff bookings are exempt (they may set up in-store rentals anytime).
+  if (
+    b.source === "web" &&
+    program.reservations_open &&
+    b.start_date.slice(0, 10) < program.reservations_open
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Reservations open ${program.reservations_open} — please choose a pickup date on or after then.`,
+    };
+  }
 
   // A piece isn't bookable again until turnaround_days after a prior return
   // (cleaning/turnaround buffer), so extend each existing rental's due date by
-  // the buffer when checking overlaps.
-  const program = await getProgram();
-  const buffer = program.turnaround_days;
+  // the buffer when checking overlaps. A per-piece override wins over the global
+  // default (e.g. 0 for a piece the owner cleans personally, same-day).
+  const buffer =
+    gate[0]?.turnaround_override != null
+      ? Number(gate[0].turnaround_override)
+      : program.turnaround_days;
   const conflicts = await sql`
     SELECT r.id, r.start_date, r.due_date, c.name AS customer_name
     FROM rentals r
@@ -84,23 +200,41 @@ export async function createBooking(b: BookingInput): Promise<BookingResult> {
     };
   }
 
-  // The Cleaning & Care Fee is charged when the waiver flag is set; store the
-  // actual configured amount so finances reflect it (see app/api/finances).
-  const fee = b.damage_waiver ? program.cleaning_fee : 0;
+  // Last Safe Rental Date guard: a rental starting too close before a confirmed
+  // reservation might not be back and cleaned in time, so block it once the
+  // start date is past the reservation's cutoff.
+  const reservedFor = await reservationCutoffConflict(b.item_id, b.start_date, program);
+  if (reservedFor) {
+    return {
+      ok: false,
+      status: 409,
+      error: `Reserved ${reservedFor} — no longer available for new rentals to protect that booking.`,
+    };
+  }
+
+  // The Cleaning & Care Fee is already included in the rental price — no
+  // separate fee is charged or stored on new rentals.
+  const fee = 0;
   const tax = salesTax(Number(b.rental_price), program.sales_tax_rate);
   const rows = await sql`
     INSERT INTO rentals (
       item_id, customer_id, start_date, due_date, status,
       rental_price, damage_waiver, cleaning_fee, sales_tax, notes, source,
-      paid, stripe_customer_id, stripe_payment_method_id, stripe_session_id
+      paid, stripe_customer_id, stripe_payment_method_id, stripe_session_id, campaign_code
     ) VALUES (
       ${b.item_id}, ${b.customer_id}, ${b.start_date}, ${b.due_date},
-      'reserved', ${b.rental_price}, ${b.damage_waiver}, ${fee}, ${tax}, ${b.notes}, ${b.source},
+      'reserved', ${b.rental_price}, false, ${fee}, ${tax}, ${b.notes}, ${b.source},
       ${b.paid ?? false}, ${b.stripe_customer_id ?? null},
-      ${b.stripe_payment_method_id ?? null}, ${b.stripe_session_id ?? null}
+      ${b.stripe_payment_method_id ?? null}, ${b.stripe_session_id ?? null}, ${b.campaign_code ?? null}
     )
     RETURNING *
   `;
+  if (b.campaign_code) {
+    await sql`
+      INSERT INTO campaign_tag_log (rental_id, code, action, actor)
+      VALUES (${(rows[0] as { id: number }).id}, ${b.campaign_code}, 'checkout', 'online checkout')
+    `.catch(() => {});
+  }
 
   await sql`
     UPDATE items SET status = 'reserved', updated_at = now()
@@ -204,6 +338,7 @@ export async function fulfillReservation(
     stripe_customer_id: stripeCustomerId,
     stripe_payment_method_id: paymentMethodId,
     stripe_session_id: sessionId,
+    campaign_code: m.campaign_code ? m.campaign_code : null,
   });
 
   if (!result.ok) {
@@ -220,6 +355,25 @@ export async function fulfillReservation(
 
   if (customerId && stripeCustomerId) {
     await sql`UPDATE customers SET stripe_customer_id = ${stripeCustomerId} WHERE id = ${customerId} AND stripe_customer_id IS NULL`;
+  }
+
+  // Redeem any store credit applied to this order — deducted only now, after
+  // payment succeeded. Runs once (fulfillReservation is idempotent per session,
+  // returning early above if already fulfilled). Clamp to the live balance.
+  const creditCents = Number(m.credit_applied || 0);
+  if (creditCents > 0 && customerId) {
+    const bal = await sql`SELECT store_credit FROM customers WHERE id = ${customerId}`;
+    const balanceCents = Math.round(Number(bal[0]?.store_credit ?? 0) * 100);
+    const redeemCents = Math.max(0, Math.min(creditCents, balanceCents));
+    if (redeemCents > 0) {
+      const redeem = redeemCents / 100;
+      await sql`UPDATE customers SET store_credit = GREATEST(store_credit - ${redeem}, 0) WHERE id = ${customerId}`;
+      const rentalId = (result.rental as { id?: number })?.id ?? null;
+      await sql`
+        INSERT INTO store_credit_entries (customer_id, amount, reason, rental_id, note)
+        VALUES (${customerId}, ${-redeem}, 'redeem', ${rentalId}, 'Online reservation — store credit')
+      `;
+    }
   }
   return { ok: true };
 }

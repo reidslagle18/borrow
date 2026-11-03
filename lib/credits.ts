@@ -4,6 +4,7 @@ import {
   AmbassadorCredits,
   AmbassadorTier,
   DEFAULT_PROGRAM,
+  cleanOccasions,
 } from "@/lib/types";
 
 /** Current YYYY-MM in the studio's local terms (server is UTC; close enough). */
@@ -23,14 +24,37 @@ export async function getProgram(): Promise<AmbassadorProgram> {
     },
     cleaning_rate: v.cleaning_rate ?? DEFAULT_PROGRAM.cleaning_rate,
     cleaning_fee: v.cleaning_fee ?? DEFAULT_PROGRAM.cleaning_fee,
+    retrieval_cleaning_fee:
+      v.retrieval_cleaning_fee ?? DEFAULT_PROGRAM.retrieval_cleaning_fee,
     blackout_dates: Array.isArray(v.blackout_dates) ? v.blackout_dates : [],
+    store_closed_dates: Array.isArray(v.store_closed_dates) ? v.store_closed_dates : [],
+    store_closed_weekdays: Array.isArray(v.store_closed_weekdays)
+      ? v.store_closed_weekdays.map(Number).filter((n) => n >= 0 && n <= 6)
+      : [],
+    color_swatches:
+      v.color_swatches && typeof v.color_swatches === "object" && !Array.isArray(v.color_swatches)
+        ? (v.color_swatches as Record<string, string>)
+        : DEFAULT_PROGRAM.color_swatches,
     posting_target: v.posting_target ?? DEFAULT_PROGRAM.posting_target,
     post_credit: v.post_credit ?? DEFAULT_PROGRAM.post_credit,
     terminal_reader_id: v.terminal_reader_id ?? DEFAULT_PROGRAM.terminal_reader_id,
     hanger_fee: v.hanger_fee ?? DEFAULT_PROGRAM.hanger_fee,
     garment_bag_fee: v.garment_bag_fee ?? DEFAULT_PROGRAM.garment_bag_fee,
     turnaround_days: v.turnaround_days ?? DEFAULT_PROGRAM.turnaround_days,
+    reservation_protect_days: v.reservation_protect_days ?? DEFAULT_PROGRAM.reservation_protect_days,
+    hold_notice_lead_days: v.hold_notice_lead_days ?? DEFAULT_PROGRAM.hold_notice_lead_days,
     sales_tax_rate: v.sales_tax_rate ?? DEFAULT_PROGRAM.sales_tax_rate,
+    reservations_open: v.reservations_open ?? DEFAULT_PROGRAM.reservations_open,
+    underperformance_days: v.underperformance_days ?? DEFAULT_PROGRAM.underperformance_days,
+    storage_window_days: v.storage_window_days ?? DEFAULT_PROGRAM.storage_window_days,
+    approval_batch_window_min:
+      v.approval_batch_window_min ?? DEFAULT_PROGRAM.approval_batch_window_min,
+    // Fall back to the seed occasions only when NOTHING is stored yet, so an
+    // owner who deletes them all doesn't get the defaults resurrected.
+    occasions:
+      v.occasions === undefined
+        ? DEFAULT_PROGRAM.occasions
+        : cleanOccasions(v.occasions),
   };
 }
 

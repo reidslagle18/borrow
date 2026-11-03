@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { getStripe } from "@/lib/stripe";
-import { getOrCreateConnectedAccount, createOnboardingLink } from "@/lib/connect";
+import { getOrCreateConnectedAccount } from "@/lib/connect";
 import { sendConsignorWelcome } from "@/lib/email";
 
 export async function GET() {
@@ -10,6 +10,7 @@ export async function GET() {
     SELECT c.*,
       (SELECT COUNT(*)::int FROM items i WHERE i.consignor_id = c.id) AS piece_count,
       (SELECT COUNT(*)::int FROM items i WHERE i.consignor_id = c.id AND i.status != 'retired') AS active_piece_count,
+      (SELECT COUNT(*)::int FROM items i WHERE i.consignor_id = c.id AND i.approval_status IN ('pending','disputed')) AS pending_approvals,
       (SELECT COALESCE(SUM(r.rental_price), 0)
          FROM rentals r JOIN items i ON i.id = r.item_id
         WHERE i.consignor_id = c.id AND r.status = 'completed') AS completed_revenue,
@@ -18,7 +19,7 @@ export async function GET() {
       (SELECT COALESCE(SUM(p.amount), 0) FROM payouts p
         WHERE p.consignor_id = c.id AND p.status = 'pending') AS owed
     FROM consignors c
-    ORDER BY c.name ASC
+    ORDER BY c.created_at DESC, c.id DESC
   `;
   const enriched = rows.map((r) => {
     const paid = Number(r.paid);
@@ -42,29 +43,30 @@ export async function POST(request: Request) {
   `;
   const consignor = rows[0];
 
-  // Create their Express connected account (receive-only) + a fresh onboarding
-  // Account Link that returns to borrow-studio, so the welcome can send it now.
-  let onboardingUrl: string | null = null;
+  // Create their Express connected account (receive-only) up front so it's
+  // ready. The welcome email links to a STABLE endpoint (below) that mints a
+  // fresh Stripe onboarding link on click — never an Account Link embedded here,
+  // since those expire within minutes and timed people out.
   const origin = new URL(request.url).origin;
   const stripe = getStripe();
   if (stripe) {
     try {
       const accountId = await getOrCreateConnectedAccount(stripe, consignor);
       consignor.stripe_account_id = accountId;
-      onboardingUrl = await createOnboardingLink(
-        stripe,
-        accountId,
-        `${origin}/connect/return?status=done`,
-        `${origin}/connect/return?status=refresh`
-      );
     } catch (err) {
       console.error("[consignors] Connect setup failed:", (err as Error).message);
     }
   }
+  const onboardingUrl = consignor.portal_code
+    ? `${origin}/api/public/connect-start?code=${encodeURIComponent(consignor.portal_code)}`
+    : null;
 
-  // Auto-send the welcome (with their onboarding link) — no manual step needed.
+  // Do NOT send the setup email automatically. Sending is always a deliberate
+  // click ("Send setup email" on the consignor's card) so nothing goes out to
+  // someone who booked but hasn't actually shown up yet. A caller can still
+  // opt in explicitly by passing send_welcome: true.
   let welcomeSent = false;
-  if (consignor.email) {
+  if (b.send_welcome === true && consignor.email) {
     const r = await sendConsignorWelcome({
       to: consignor.email,
       consignorName: consignor.name,

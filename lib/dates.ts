@@ -7,8 +7,21 @@ export function toISO(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** The studio's timezone. Everything "today"/"now" is computed here so the UTC
+ *  server (and shoppers in other zones) agree with Fayetteville's local date —
+ *  otherwise evenings roll a day ahead in UTC. */
+export const STUDIO_TZ = "America/Chicago";
+
 export function todayISO(): string {
-  return toISO(new Date());
+  // en-CA formats as YYYY-MM-DD; timeZone pins it to the studio's local date.
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: STUDIO_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const g = (t: string) => parts.find((p) => p.type === t)?.value ?? "01";
+  return `${g("year")}-${g("month")}-${g("day")}`;
 }
 
 export function fromISO(iso: string): Date {

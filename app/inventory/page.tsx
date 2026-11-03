@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import ItemForm from "@/components/ItemForm";
@@ -8,11 +8,10 @@ import {
   Item,
   Consignor,
   ItemStatus,
+  Occasion,
   STATUSES,
-  TIERS,
   SIZES,
   EVENT_TYPES,
-  tierLabel,
   statusLabel,
 } from "@/lib/types";
 
@@ -20,24 +19,34 @@ const STATUS_STYLES: Record<ItemStatus, string> = {
   available: "bg-sage text-ink",
   reserved: "bg-lavender text-ink",
   rented: "bg-blush text-ink",
+  consignor_hold: "bg-blush-deep/25 text-ink",
   cleaning: "bg-butter text-ink",
   retired: "bg-ink/10 text-ink/60",
   with_consignor: "bg-lavender-deep/30 text-ink",
+  in_storage: "bg-ink/10 text-ink/60",
 };
 
 function money(n: number | string): string {
   return `$${Number(n) % 1 === 0 ? Number(n) : Number(n).toFixed(2)}`;
 }
 
+// Module-level cache so returning from a piece's detail page renders the list
+// instantly (no skeleton, no height collapse) — which is what lets us restore
+// the exact scroll position instead of snapping to the top.
+let cachedItems: Item[] | null = null;
+let cachedConsignors: Consignor[] = [];
+const SCROLL_KEY = "inventory_scroll";
+const ORDER_KEY = "inventory_order";
+
 export default function InventoryPage() {
-  const [items, setItems] = useState<Item[] | null>(null);
-  const [consignors, setConsignors] = useState<Consignor[]>([]);
+  const [items, setItems] = useState<Item[] | null>(cachedItems);
+  const [consignors, setConsignors] = useState<Consignor[]>(cachedConsignors);
   const [loadError, setLoadError] = useState("");
+  const restoredScroll = useRef(false);
 
   // filters
   const [q, setQ] = useState("");
   const [fStatus, setFStatus] = useState<ItemStatus | "">("");
-  const [fTier, setFTier] = useState("");
   const [fSize, setFSize] = useState("");
   const [fEvent, setFEvent] = useState("");
   const [fBrand, setFBrand] = useState("");
@@ -45,6 +54,15 @@ export default function InventoryPage() {
   // modal
   const [formOpen, setFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
+
+  // bulk occasion tagging
+  const [occasions, setOccasions] = useState<Occasion[]>([]);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkOccasion, setBulkOccasion] = useState("");
+  const [bulkSub, setBulkSub] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -57,10 +75,46 @@ export default function InventoryPage() {
         setItems(await ir.json());
         if (cr.ok) setConsignors(await cr.json());
       } catch {
-        setLoadError("Couldn't load inventory — refresh to try again.");
+        // Keep any cached list on screen; only show the error if we have nothing.
+        if (!cachedItems) setLoadError("Couldn't load inventory — refresh to try again.");
       }
     })();
   }, []);
+
+  // Occasion config for the bulk-tag picker.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/settings");
+        if (!res.ok) return;
+        const d = await res.json();
+        if (Array.isArray(d?.program?.occasions)) setOccasions(d.program.occasions);
+      } catch {
+        /* non-fatal */
+      }
+    })();
+  }, []);
+
+  // Keep the module cache mirroring the latest data.
+  useEffect(() => {
+    if (items) cachedItems = items;
+  }, [items]);
+  useEffect(() => {
+    if (consignors.length) cachedConsignors = consignors;
+  }, [consignors]);
+
+  // Restore the scroll position saved when a piece was opened, once the list
+  // is on screen — so closing a piece returns you right where you were.
+  useEffect(() => {
+    if (restoredScroll.current || items === null) return;
+    restoredScroll.current = true;
+    const saved = sessionStorage.getItem(SCROLL_KEY);
+    if (saved) {
+      sessionStorage.removeItem(SCROLL_KEY);
+      const y = parseInt(saved, 10);
+      if (y > 0) requestAnimationFrame(() => window.scrollTo(0, y));
+    }
+  }, [items]);
 
   const brands = useMemo(
     () =>
@@ -73,7 +127,6 @@ export default function InventoryPage() {
   const filtered = useMemo(() => {
     let list = items ?? [];
     if (fStatus) list = list.filter((i) => i.status === fStatus);
-    if (fTier) list = list.filter((i) => i.tier === fTier);
     if (fSize) list = list.filter((i) => i.size === fSize);
     if (fEvent) list = list.filter((i) => i.event_types?.includes(fEvent));
     if (fBrand) list = list.filter((i) => i.brand === fBrand);
@@ -89,7 +142,7 @@ export default function InventoryPage() {
       );
     }
     return list;
-  }, [items, q, fStatus, fTier, fSize, fEvent, fBrand]);
+  }, [items, q, fStatus, fSize, fEvent, fBrand]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -97,7 +150,7 @@ export default function InventoryPage() {
     return c;
   }, [items]);
 
-  const hasFilters = q || fStatus || fTier || fSize || fEvent || fBrand;
+  const hasFilters = q || fStatus || fSize || fEvent || fBrand;
 
   function openAdd() {
     setEditingItem(null);
@@ -119,25 +172,94 @@ export default function InventoryPage() {
     setFormOpen(false);
   }
 
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function exitSelect() {
+    setSelectMode(false);
+    setSelected(new Set());
+    setBulkOccasion("");
+    setBulkSub("");
+    setBulkMsg("");
+  }
+
+  const bulkSubOptions =
+    occasions.find((o) => o.name === bulkOccasion)?.subs ?? [];
+
+  async function applyBulkTag(mode: "add" | "remove") {
+    if (selected.size === 0 || !bulkOccasion) return;
+    setBulkBusy(true);
+    setBulkMsg("");
+    try {
+      const res = await fetch("/api/items/bulk-tag", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ids: Array.from(selected),
+          occasion: bulkOccasion,
+          sub: bulkSub || undefined,
+          mode,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setBulkMsg(d.error || "Couldn't apply — try again.");
+        return;
+      }
+      // Refresh so the new tags are reflected, then keep the selection so the
+      // owner can apply another tag to the same batch.
+      const ir = await fetch("/api/items");
+      if (ir.ok) setItems(await ir.json());
+      const label = bulkSub ? `${bulkOccasion} → ${bulkSub}` : bulkOccasion;
+      setBulkMsg(
+        `${mode === "add" ? "Tagged" : "Removed"} ${selected.size} piece${
+          selected.size === 1 ? "" : "s"
+        } ${mode === "add" ? "with" : "from"} “${label}”.`
+      );
+    } catch {
+      setBulkMsg("Couldn't reach the server — try again.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   return (
     <AppShell>
       <div className="mx-auto max-w-6xl px-5 py-8 md:px-10 md:py-12">
         {/* Header */}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-4xl font-medium md:text-5xl">Inventory</h1>
+            <h1 className="font-serif text-4xl font-medium md:text-5xl">Inventory</h1>
             <p className="mt-1.5 text-sm text-ink/50">
               {items === null
                 ? "Loading…"
                 : `${items.length} piece${items.length === 1 ? "" : "s"} in the collection`}
             </p>
           </div>
-          <button
-            onClick={openAdd}
-            className="rounded-full bg-ink px-6 py-3 text-[15px] text-cream transition-transform active:scale-[0.98]"
-          >
-            + Add piece
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
+              className={`rounded-full border px-5 py-3 text-[15px] transition-colors ${
+                selectMode
+                  ? "border-ink bg-ink text-cream"
+                  : "border-ink/15 bg-white text-ink/70 hover:border-ink/35"
+              }`}
+            >
+              {selectMode ? "Done" : "Select · tag"}
+            </button>
+            <button
+              onClick={openAdd}
+              className="rounded-full bg-ink px-6 py-3 text-[15px] text-cream transition-transform active:scale-[0.98]"
+            >
+              + Add piece
+            </button>
+          </div>
         </div>
 
         {/* Status chips */}
@@ -173,18 +295,6 @@ export default function InventoryPage() {
             placeholder="Search brand, ID, color…"
             className="min-w-44 flex-1 rounded-full border border-ink/15 bg-white px-4.5 py-2.5 text-[15px] outline-none focus:border-ink/40"
           />
-          <select
-            value={fTier}
-            onChange={(e) => setFTier(e.target.value)}
-            className="rounded-full border border-ink/15 bg-white px-3.5 py-2.5 text-sm outline-none"
-          >
-            <option value="">Tier</option>
-            {TIERS.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label} ${t.price}
-              </option>
-            ))}
-          </select>
           <select
             value={fSize}
             onChange={(e) => setFSize(e.target.value)}
@@ -226,7 +336,6 @@ export default function InventoryPage() {
               onClick={() => {
                 setQ("");
                 setFStatus("");
-                setFTier("");
                 setFSize("");
                 setFEvent("");
                 setFBrand("");
@@ -273,66 +382,185 @@ export default function InventoryPage() {
           </div>
         ) : (
           <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            {filtered.map((item) => (
-              <Link
-                key={item.id}
-                href={`/inventory/${encodeURIComponent(item.barcode || item.id)}`}
-                className="group text-left"
-              >
-                <div className="relative aspect-[3/4] overflow-hidden rounded-2xl bg-white">
-                  {item.photo_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={item.photo_url}
-                      alt={`${item.brand} ${item.color ?? ""}`}
-                      loading="lazy"
-                      className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-lavender/40">
-                      <span className="font-serif text-5xl italic text-ink/25">
-                        {item.brand.charAt(0)}
+            {filtered.map((item) => {
+              const isSel = selected.has(item.id);
+              const cardBody = (
+                <>
+                  <div className="relative aspect-[3/4] overflow-hidden rounded-2xl bg-white">
+                    {item.photo_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={item.photo_url}
+                        alt={`${item.brand} ${item.color ?? ""}`}
+                        loading="lazy"
+                        className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-lavender/40">
+                        <span className="font-serif text-5xl italic text-ink/25">
+                          {item.brand.charAt(0)}
+                        </span>
+                      </div>
+                    )}
+                    <span
+                      className={`absolute left-2.5 top-2.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${STATUS_STYLES[item.status]}`}
+                    >
+                      {statusLabel(item.status)}
+                    </span>
+                    {selectMode ? (
+                      <span
+                        className={`absolute right-2.5 top-2.5 flex h-7 w-7 items-center justify-center rounded-full border-2 text-[14px] font-bold ${
+                          isSel
+                            ? "border-ink bg-ink text-cream"
+                            : "border-white bg-ink/20 text-transparent"
+                        }`}
+                      >
+                        ✓
+                      </span>
+                    ) : (
+                      item.ownership === "consignment" && (
+                        <span className="absolute right-2.5 top-2.5 rounded-full bg-cream/90 px-2 py-1 text-[10px] uppercase tracking-wider text-ink/60">
+                          Consign
+                        </span>
+                      )
+                    )}
+                    {item.new_with_tags && (
+                      <span className="absolute bottom-2.5 left-2.5 rounded-full bg-sage-deep px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-cream">
+                        NWT
+                      </span>
+                    )}
+                  </div>
+                  <div className="px-1 pt-2.5">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="truncate font-serif text-lg font-semibold leading-tight">
+                        {item.name || item.brand}
+                      </span>
+                      <span className="shrink-0 text-[15px]">
+                        {money(item.rental_price)}
+                        <span className="text-[11px] text-ink/40"> rent</span>
                       </span>
                     </div>
-                  )}
-                  <span
-                    className={`absolute left-2.5 top-2.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${STATUS_STYLES[item.status]}`}
-                  >
-                    {statusLabel(item.status)}
-                  </span>
-                  {item.ownership === "consignment" && (
-                    <span className="absolute right-2.5 top-2.5 rounded-full bg-cream/90 px-2 py-1 text-[10px] uppercase tracking-wider text-ink/60">
-                      Consign
-                    </span>
-                  )}
-                  {item.new_with_tags && (
-                    <span className="absolute bottom-2.5 left-2.5 rounded-full bg-sage-deep px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-cream">
-                      NWT
-                    </span>
-                  )}
-                </div>
-                <div className="px-1 pt-2.5">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="truncate font-serif text-lg font-semibold leading-tight">
-                      {item.name || item.brand}
-                    </span>
-                    <span className="shrink-0 text-[15px]">
-                      {money(item.rental_price)}
-                    </span>
+                    <p className="mt-0.5 text-[13px] text-ink/50">
+                      {item.name ? `${item.brand} · ` : ""}
+                      <span className="font-mono">{item.barcode || item.id}</span> ·{" "}
+                      {item.size}
+                      {item.color ? ` · ${item.color}` : ""}
+                    </p>
+                    <p className="mt-0.5 text-[13px] text-ink/55">
+                      {item.retail_value != null
+                        ? `Retails for ${money(item.retail_value)}`
+                        : "Retail value not set"}
+                    </p>
                   </div>
-                  <p className="mt-0.5 text-[13px] text-ink/50">
-                    {item.name ? `${item.brand} · ` : ""}
-                    <span className="font-mono">{item.barcode || item.id}</span> ·{" "}
-                    {item.size}
-                    {item.color ? ` · ${item.color}` : ""} ·{" "}
-                    {tierLabel(item.tier)}
-                  </p>
-                </div>
-              </Link>
-            ))}
+                </>
+              );
+              if (selectMode) {
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => toggleSelected(item.id)}
+                    className={`group rounded-2xl text-left transition-shadow ${
+                      isSel ? "ring-2 ring-ink ring-offset-2 ring-offset-cream" : ""
+                    }`}
+                  >
+                    {cardBody}
+                  </button>
+                );
+              }
+              return (
+                <Link
+                  key={item.id}
+                  href={`/inventory/${encodeURIComponent(item.barcode || item.id)}`}
+                  onClick={() => {
+                    sessionStorage.setItem(SCROLL_KEY, String(window.scrollY));
+                    // Save the order currently on screen so the piece page can
+                    // step to the next/previous piece in this same view.
+                    sessionStorage.setItem(
+                      ORDER_KEY,
+                      JSON.stringify(filtered.map((i) => i.barcode || i.id))
+                    );
+                  }}
+                  className="group text-left"
+                >
+                  {cardBody}
+                </Link>
+              );
+            })}
           </div>
         )}
       </div>
+
+      {selectMode && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-ink/10 bg-cream/95 px-4 py-3 backdrop-blur">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-2">
+            <span className="text-[14px] font-medium">
+              {selected.size} selected
+            </span>
+            <button
+              onClick={() => setSelected(new Set(filtered.map((i) => i.id)))}
+              className="rounded-full border border-ink/15 bg-white px-3 py-1.5 text-[13px] text-ink/70"
+            >
+              Select all ({filtered.length})
+            </button>
+            {selected.size > 0 && (
+              <button
+                onClick={() => setSelected(new Set())}
+                className="rounded-full px-2 py-1.5 text-[13px] text-ink/50 underline underline-offset-2"
+              >
+                Clear
+              </button>
+            )}
+            <span className="mx-1 hidden h-5 w-px bg-ink/10 sm:block" />
+            <select
+              value={bulkOccasion}
+              onChange={(e) => {
+                setBulkOccasion(e.target.value);
+                setBulkSub("");
+              }}
+              className="rounded-full border border-ink/15 bg-white px-3.5 py-2 text-sm outline-none"
+            >
+              <option value="">Occasion…</option>
+              {occasions.map((o) => (
+                <option key={o.name} value={o.name}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+            {bulkSubOptions.length > 0 && (
+              <select
+                value={bulkSub}
+                onChange={(e) => setBulkSub(e.target.value)}
+                className="rounded-full border border-ink/15 bg-white px-3.5 py-2 text-sm outline-none"
+              >
+                <option value="">(whole occasion)</option>
+                {bulkSubOptions.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              disabled={bulkBusy || selected.size === 0 || !bulkOccasion}
+              onClick={() => applyBulkTag("add")}
+              className="rounded-full bg-ink px-4 py-2 text-sm text-cream disabled:opacity-40"
+            >
+              {bulkBusy ? "Working…" : "Apply tag"}
+            </button>
+            <button
+              disabled={bulkBusy || selected.size === 0 || !bulkOccasion}
+              onClick={() => applyBulkTag("remove")}
+              className="rounded-full border border-ink/15 bg-white px-4 py-2 text-sm text-ink/60 disabled:opacity-40"
+            >
+              Remove
+            </button>
+            {bulkMsg && (
+              <span className="w-full text-[13px] text-sage-deep sm:w-auto">{bulkMsg}</span>
+            )}
+          </div>
+        </div>
+      )}
 
       {formOpen && (
         <ItemForm

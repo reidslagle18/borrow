@@ -19,7 +19,7 @@ export default function LoginPage() {
       body: JSON.stringify({ password }),
     });
     if (res.ok) {
-      router.push("/inventory");
+      router.push("/today");
       router.refresh();
     } else {
       setError("That's not it — try again.");

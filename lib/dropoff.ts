@@ -1,20 +1,30 @@
 import { sql } from "@/lib/db";
 
+/** Per-day open/close override ("HH:MM"). */
+export interface DayHours {
+  open: string;
+  close: string;
+}
+
 /** Configurable drop-off booking window (stored in app_settings 'dropoff'). */
 export interface DropoffConfig {
   open_days: number[]; // 0=Sun … 6=Sat
-  open_time: string; // "HH:MM"
-  close_time: string; // "HH:MM"
+  open_time: string; // "HH:MM" default open (used when a day has no override)
+  close_time: string; // "HH:MM" default close
   slot_minutes: number; // slot length
   closed_dates: string[]; // YYYY-MM-DD blackout/closed days
+  start_date: string; // earliest bookable drop-off date, YYYY-MM-DD ("" = no limit)
+  day_hours: Record<string, DayHours>; // weekday "0".."6" → that day's own hours
 }
 
 export const DEFAULT_DROPOFF: DropoffConfig = {
   open_days: [1, 2, 3, 4, 5, 6], // Mon–Sat
   open_time: "10:00",
   close_time: "18:00",
-  slot_minutes: 30,
+  slot_minutes: 45,
   closed_dates: [],
+  start_date: "",
+  day_hours: {},
 };
 
 export async function getDropoffConfig(): Promise<DropoffConfig> {
@@ -26,6 +36,18 @@ export async function getDropoffConfig(): Promise<DropoffConfig> {
     close_time: v.close_time || DEFAULT_DROPOFF.close_time,
     slot_minutes: v.slot_minutes || DEFAULT_DROPOFF.slot_minutes,
     closed_dates: Array.isArray(v.closed_dates) ? v.closed_dates : [],
+    start_date: typeof v.start_date === "string" ? v.start_date : "",
+    day_hours:
+      v.day_hours && typeof v.day_hours === "object" ? v.day_hours : {},
+  };
+}
+
+/** The open/close hours for a specific weekday: its override, else the default. */
+export function hoursForWeekday(cfg: DropoffConfig, wd: number): DayHours {
+  const h = cfg.day_hours?.[String(wd)];
+  return {
+    open: h?.open || cfg.open_time,
+    close: h?.close || cfg.close_time,
   };
 }
 
@@ -61,10 +83,12 @@ export function centralNow(): { date: string; minutes: number } {
 
 /** All slot start times ("HH:MM") the config allows on a date (ignores bookings). */
 export function slotsForDate(cfg: DropoffConfig, dateStr: string): string[] {
+  if (cfg.start_date && dateStr < cfg.start_date) return []; // drop-offs not open yet
   if (!cfg.open_days.includes(weekday(dateStr))) return [];
   if (cfg.closed_dates.includes(dateStr)) return [];
-  const start = toMin(cfg.open_time);
-  const end = toMin(cfg.close_time);
+  const { open, close } = hoursForWeekday(cfg, weekday(dateStr));
+  const start = toMin(open);
+  const end = toMin(close);
   const out: string[] = [];
   for (let t = start; t < end; t += cfg.slot_minutes) out.push(toHHMM(t));
   return out;

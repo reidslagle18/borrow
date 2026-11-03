@@ -1,8 +1,7 @@
 import type Stripe from "stripe";
 import { sql } from "@/lib/db";
 import { getStripe } from "@/lib/stripe";
-import { CONSIGNOR_SHARE } from "@/lib/types";
-import { sendPayoutNotice } from "@/lib/email";
+import { sendPayoutNotice, sendConsignorLossNotice } from "@/lib/email";
 
 /**
  * Stripe Connect — automatic bank payouts to consignors.
@@ -65,6 +64,50 @@ function isPayoutReady(acct: Stripe.Account): boolean {
   return !!acct.payouts_enabled && acct.capabilities?.transfers === "active";
 }
 
+/**
+ * The consignor-facing truth about their direct deposit, resolved live from
+ * Stripe when the cached flag says "not ready":
+ *  - active: money flows automatically, nothing to do
+ *  - action_needed: Stripe still needs something from them (resume onboarding)
+ *  - verifying: they finished their part; Stripe is verifying — nothing to do
+ * Also self-heals the cached payouts_enabled flag and releases queued payouts
+ * the moment an account turns active.
+ */
+export async function getDepositStatus(c: {
+  id: number;
+  stripe_account_id: string | null;
+  payouts_enabled: boolean;
+}): Promise<{ active: boolean; started: boolean; action_needed: boolean; verifying: boolean }> {
+  const started = !!c.stripe_account_id;
+  let active = !!c.payouts_enabled;
+  let action_needed = false;
+  let verifying = false;
+  if (started && !active) {
+    const stripe = getStripe();
+    if (stripe) {
+      try {
+        const acct = await stripe.accounts.retrieve(c.stripe_account_id as string);
+        active = isPayoutReady(acct);
+        if (active) {
+          await sql`UPDATE consignors SET payouts_enabled = true WHERE id = ${c.id}`;
+          await sweepPendingPayouts(c.id); // release anything already earned
+        } else {
+          const req = acct.requirements;
+          const due = [
+            ...(req?.currently_due ?? []),
+            ...(req?.past_due ?? []),
+          ];
+          action_needed = due.length > 0 || !acct.details_submitted;
+          verifying = !action_needed;
+        }
+      } catch {
+        /* keep cached values */
+      }
+    }
+  }
+  return { active, started, action_needed, verifying };
+}
+
 /** Refresh the cached payouts_enabled flag for a connected account. */
 export async function refreshConsignorPayoutStatus(
   stripe: Stripe,
@@ -86,28 +129,73 @@ export async function refreshConsignorPayoutStatus(
 export async function payoutForCompletedRental(rentalId: number): Promise<void> {
   try {
     const rows = await sql`
-      SELECT r.id, r.rental_price, i.ownership, i.consignor_id,
+      SELECT r.id, r.rental_price, r.source, i.ownership, i.consignor_id,
+             COALESCE(c.consignor_rate, 60) AS rate,
              COALESCE(NULLIF(i.name, ''), i.brand) AS brand
       FROM rentals r JOIN items i ON i.id = r.item_id
+      LEFT JOIN consignors c ON c.id = i.consignor_id
       WHERE r.id = ${rentalId}
     `;
     const r = rows[0];
     if (!r || r.ownership !== "consignment" || !r.consignor_id) return;
 
-    const amount = Math.round(Number(r.rental_price) * CONSIGNOR_SHARE * 100) / 100;
-    if (amount <= 0) return; // free/ambassador rental — nothing owed
+    // Consignor's own locked rate (Borrow keeps the rest), not a flat 60/40.
+    // Always their normal cut = rate × the IN-STORE price — same on e.closet as
+    // in store (the e.closet markup is Borrow's; consignors are paid the same).
+    const gross = Math.round(Number(r.rental_price) * (Number(r.rate) / 100) * 100) / 100;
+    if (gross <= 0) return; // nothing owed
 
-    // Claim the rental's payout slot. ON CONFLICT → already handled, stop here.
+    // Withhold any money the consignor owes back (e.g. a payout sent in error)
+    // from this payout, up to the whole amount, until it's fully recovered.
+    const recs = await sql`
+      SELECT id, amount, recovered FROM consignor_recoveries
+      WHERE consignor_id = ${r.consignor_id} AND resolved_at IS NULL
+      ORDER BY id ASC`;
+    let outstanding = 0;
+    for (const x of recs) outstanding += Number(x.amount) - Number(x.recovered);
+    outstanding = Math.round(Math.max(0, outstanding) * 100) / 100;
+    const withhold = Math.round(Math.min(gross, outstanding) * 100) / 100;
+    const amount = Math.round((gross - withhold) * 100) / 100;
+
+    const label = r.source === "ecloset" ? "e.closet payout · " : "Auto payout · ";
+    const note = withhold > 0 ? `${label}${r.brand} (−$${withhold} withheld to recover a prior overpayment)` : `${label}${r.brand}`;
+
+    // Claim the rental's payout slot (idempotent via the PARTIAL unique index on
+    // rental_id). A fully-withheld payout is $0 and marked paid so the sweep skips it.
     const inserted = await sql`
       INSERT INTO payouts (consignor_id, amount, method, status, auto, rental_id, notes)
-      VALUES (${r.consignor_id}, ${amount}, 'stripe', 'pending', true, ${rentalId},
-              ${"Auto payout · " + r.brand})
-      ON CONFLICT (rental_id) DO NOTHING
+      VALUES (${r.consignor_id}, ${amount}, 'stripe', ${amount > 0 ? "pending" : "paid"}, true, ${rentalId},
+              ${note})
+      ON CONFLICT (rental_id) WHERE rental_id IS NOT NULL DO NOTHING
       RETURNING id
     `;
-    // Row created as 'pending' — it accrues in the consignor's ledger. Payout
-    // happens later when the owner pays the balance in one action (or on the
-    // consignor's schedule); we don't auto-transfer here.
+    if (inserted.length > 0) {
+      // Apply the withholding across the open recovery rows — once, tied to the
+      // freshly-created payout row so a retry can't double-recover.
+      let toApply = withhold;
+      for (const x of recs) {
+        if (toApply <= 0.001) break;
+        const remaining = Math.round((Number(x.amount) - Number(x.recovered)) * 100) / 100;
+        if (remaining <= 0) continue;
+        const take = Math.round(Math.min(remaining, toApply) * 100) / 100;
+        const newRecovered = Math.round((Number(x.recovered) + take) * 100) / 100;
+        await sql`
+          UPDATE consignor_recoveries
+          SET recovered = ${newRecovered},
+              resolved_at = CASE WHEN ${newRecovered} >= amount THEN now() ELSE resolved_at END
+          WHERE id = ${x.id}`;
+        toApply = Math.round((toApply - take) * 100) / 100;
+      }
+      // Send the remainder to their bank if onboarded (only when >$0).
+      if (amount > 0) {
+        await trySendPayout(
+          Number(inserted[0].id),
+          Number(r.consignor_id),
+          amount,
+          `payout_rental_${rentalId}`
+        );
+      }
+    }
   } catch (err) {
     console.error(`[connect] payoutForCompletedRental(${rentalId}) failed:`, (err as Error).message);
   }
@@ -142,11 +230,37 @@ export async function createConsignorLossPayout(rentalId: number): Promise<void>
       INSERT INTO payouts (consignor_id, amount, method, status, auto, kind, loss_rental_id, notes)
       VALUES (${r.consignor_id}, ${amount}, 'stripe', 'pending', true, 'loss', ${rentalId},
               ${"Replacement (total loss) · " + r.brand})
-      ON CONFLICT (loss_rental_id) DO NOTHING
+      ON CONFLICT (loss_rental_id) WHERE loss_rental_id IS NOT NULL DO NOTHING
       RETURNING id
     `;
-    // Accrues as 'pending' in the ledger regardless of whether we recover the
-    // charge from the renter; paid out later with the owed balance.
+    // Owed regardless of whether we recover from the renter. Auto-send it to the
+    // consignor's bank now if they're onboarded; otherwise it stays 'pending'
+    // for the sweep. Only for a freshly-created row (idempotent).
+    if (inserted.length > 0) {
+      // Tell the consignor their piece was lost and the replacement is coming
+      // (best-effort; only on a freshly-created loss row so it can't double-send).
+      try {
+        const c = (
+          await sql`SELECT name, email FROM consignors WHERE id = ${r.consignor_id}`
+        )[0];
+        if (c?.email) {
+          await sendConsignorLossNotice({
+            to: String(c.email),
+            consignorName: String(c.name || ""),
+            itemBrand: String(r.brand),
+            amount,
+          });
+        }
+      } catch {
+        /* non-fatal — the payout still happens */
+      }
+      await trySendPayout(
+        Number(inserted[0].id),
+        Number(r.consignor_id),
+        amount,
+        `payout_loss_${rentalId}`
+      );
+    }
   } catch (err) {
     console.error(`[connect] createConsignorLossPayout(${rentalId}) failed:`, (err as Error).message);
   }
@@ -184,7 +298,7 @@ async function trySendPayout(
     );
     await sql`
       UPDATE payouts
-      SET status = 'paid', stripe_transfer_id = ${transfer.id}, paid_at = CURRENT_DATE
+      SET status = 'paid', stripe_transfer_id = ${transfer.id}, paid_at = (now() AT TIME ZONE 'America/Chicago')::date
       WHERE id = ${payoutId}
     `;
     if (c.email) {
@@ -198,7 +312,12 @@ async function trySendPayout(
   } catch (err) {
     // Insufficient available balance / temporary issue → keep pending for the
     // cron sweep. A hard failure also stays pending and is visible in the admin.
-    console.error(`[connect] transfer for payout ${payoutId} deferred:`, (err as Error).message);
+    const msg = (err as Error).message;
+    console.error(`[connect] transfer for payout ${payoutId} deferred:`, msg);
+    await sql`
+      UPDATE payouts SET notes = ${"[deferred] " + msg.slice(0, 400)}
+      WHERE id = ${payoutId}
+    `.catch(() => {});
   }
 }
 

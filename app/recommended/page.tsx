@@ -25,16 +25,23 @@ export default function RecommendedPage() {
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
     (async () => {
-      const [ir, rr] = await Promise.all([
-        fetch("/api/items"),
-        fetch("/api/recommended"),
-      ]);
-      if (ir.ok) setItems(await ir.json());
-      if (rr.ok) setOrder((await rr.json()).order ?? []);
-      setLoaded(true);
+      try {
+        const [ir, rr] = await Promise.all([
+          fetch("/api/items"),
+          fetch("/api/recommended"),
+        ]);
+        if (!ir.ok) throw new Error(`items ${ir.status}`);
+        setItems(await ir.json());
+        if (rr.ok) setOrder((await rr.json()).order ?? []);
+        setLoaded(true);
+      } catch {
+        setLoadError("Couldn't load recommended — refresh to try again.");
+      }
     })();
   }, []);
 
@@ -53,7 +60,8 @@ export default function RecommendedPage() {
       (i) =>
         !inOrder.has(i.id) &&
         i.status !== "retired" &&
-        i.status !== "with_consignor"
+        i.status !== "with_consignor" &&
+        i.status !== "consignor_hold"
     )
     .sort((a, b) => (a.name || a.brand).localeCompare(b.name || b.brand));
 
@@ -62,6 +70,18 @@ export default function RecommendedPage() {
     if (to < 0 || to >= order.length) return;
     const next = [...order];
     [next[idx], next[to]] = [next[to], next[idx]];
+    setOrder(next);
+    setSavedAt(false);
+  }
+  // Jump a piece straight to a typed position (1-based), pulling it out and
+  // reinserting — so no clicking the arrow dozens of times to move it far.
+  function moveTo(fromIdx: number, toPos1: number) {
+    if (Number.isNaN(toPos1)) return;
+    const toIdx = Math.max(0, Math.min(order.length - 1, Math.round(toPos1) - 1));
+    if (toIdx === fromIdx) return;
+    const next = [...order];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
     setOrder(next);
     setSavedAt(false);
   }
@@ -76,13 +96,20 @@ export default function RecommendedPage() {
 
   async function save() {
     setSaving(true);
-    const res = await fetch("/api/recommended", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ order }),
-    });
-    if (res.ok) setSavedAt(true);
-    setSaving(false);
+    setSaveError("");
+    try {
+      const res = await fetch("/api/recommended", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order }),
+      });
+      if (res.ok) setSavedAt(true);
+      else setSaveError("Couldn't save the order — try again.");
+    } catch {
+      setSaveError("Couldn't reach the studio — check your connection and try again.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -90,10 +117,12 @@ export default function RecommendedPage() {
       <div className="mx-auto max-w-2xl px-5 py-8 md:px-10 md:py-12">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-4xl font-medium md:text-5xl">Recommended</h1>
+            <h1 className="font-serif text-4xl font-medium md:text-5xl">Recommended</h1>
             <p className="mt-1.5 text-sm text-ink/50">
-              Curate what customers see first. Top of the list shows first. Pieces
-              you don&apos;t list fall back to newest-available.
+              Curate what customers see first. Top of the list shows first — type
+              a position number on any piece to jump it there, or use the arrows.
+              Pieces you don&apos;t list fall back to most-loved order (the
+              most-clicked pieces first).
             </p>
           </div>
           <button
@@ -107,8 +136,11 @@ export default function RecommendedPage() {
         {savedAt && (
           <p className="mt-3 text-sm text-sage-deep">Saved ✓ — live on the shop.</p>
         )}
+        {saveError && <p className="mt-3 text-sm text-blush-deep">{saveError}</p>}
 
-        {!loaded ? (
+        {loadError ? (
+          <p className="mt-16 text-center text-ink/50">{loadError}</p>
+        ) : !loaded ? (
           <div className="mt-8 h-64 animate-pulse rounded-2xl bg-ink/5" />
         ) : (
           <>
@@ -128,9 +160,26 @@ export default function RecommendedPage() {
                       key={i.id}
                       className="flex items-center gap-3 rounded-2xl bg-white p-3"
                     >
-                      <span className="w-5 shrink-0 text-center text-sm text-ink/40">
-                        {idx + 1}
-                      </span>
+                      <input
+                        key={`pos-${i.id}-${idx}`}
+                        type="text"
+                        inputMode="numeric"
+                        defaultValue={idx + 1}
+                        onFocus={(e) => e.target.select()}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                        }}
+                        onBlur={(e) => {
+                          const v = parseInt(e.target.value, 10);
+                          if (Number.isNaN(v) || v === idx + 1) {
+                            e.target.value = String(idx + 1); // revert bad/no-op input
+                          } else {
+                            moveTo(idx, v);
+                          }
+                        }}
+                        aria-label={`Position ${idx + 1} — type a new number to move it`}
+                        className="w-9 shrink-0 rounded-md border border-ink/15 bg-white px-1 py-1 text-center text-sm tabular-nums focus:border-ink/40 focus:outline-none"
+                      />
                       <Thumb item={i} />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-[15px]">

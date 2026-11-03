@@ -93,6 +93,121 @@ export async function chargeRenterForRental(opts: {
   }
 }
 
+/**
+ * Refund late fees already charged on a rental, bringing the net collected late
+ * fee DOWN to `downTo` dollars (default 0 = refund everything). Used when a late
+ * fee is waived or lowered at check-in, and by the manual "Refund late fee"
+ * button. Refunds succeeded charges newest-first (partial-refunding the last one
+ * if needed), stamps refunded_amount/refunded_at, and winds back the rental's
+ * late_fee_charged so the daily job doesn't re-bill. When fully waiving
+ * (downTo = 0) it ALSO voids any still-uncollected (failed) late-fee charges and
+ * reverses their outstanding balance, so a waived fee is never chased.
+ * Idempotent and safe to call when there's nothing to refund.
+ */
+export async function refundLateFeesForRental(
+  rentalId: number,
+  downTo = 0
+): Promise<{ refunded: number; count: number; error?: string }> {
+  const stripe = getStripe();
+  const rows = (await sql`
+    SELECT id, amount, refunded_amount, stripe_payment_intent_id
+    FROM customer_charges
+    WHERE rental_id = ${rentalId}
+      AND kind = 'late_fee'
+      AND status = 'succeeded'
+      AND (amount - refunded_amount) > 0.005
+    ORDER BY id DESC
+  `) as {
+    id: number;
+    amount: string | number;
+    refunded_amount: string | number;
+    stripe_payment_intent_id: string | null;
+  }[];
+
+  const collectedCents = rows.reduce(
+    (s, r) => s + Math.round((Number(r.amount) - Number(r.refunded_amount)) * 100),
+    0
+  );
+  let needCents = Math.max(0, collectedCents - Math.round(downTo * 100));
+
+  let refundedCents = 0;
+  let count = 0;
+  for (const r of rows) {
+    if (needCents <= 0) break;
+    const remainingCents = Math.round(
+      (Number(r.amount) - Number(r.refunded_amount)) * 100
+    );
+    const thisCents = Math.min(remainingCents, needCents);
+    if (thisCents <= 0) continue;
+    const pi = r.stripe_payment_intent_id;
+    if (!stripe || typeof pi !== "string" || !pi.startsWith("pi_")) {
+      // No card charge to reverse (shouldn't happen for a 'succeeded' row) — skip.
+      continue;
+    }
+    try {
+      await stripe.refunds.create(
+        { payment_intent: pi, amount: thisCents },
+        {
+          idempotencyKey: `latefee_refund_${r.id}_${Math.round(
+            Number(r.refunded_amount) * 100
+          )}_${thisCents}`,
+        }
+      );
+    } catch (err) {
+      return {
+        refunded: refundedCents / 100,
+        count,
+        error: (err as Error).message,
+      };
+    }
+    const newRefunded =
+      Math.round(Number(r.refunded_amount) * 100 + thisCents) / 100;
+    await sql`
+      UPDATE customer_charges SET
+        refunded_amount = ${newRefunded},
+        refunded_at = CASE WHEN ${newRefunded} >= amount THEN now() ELSE refunded_at END
+      WHERE id = ${r.id}
+    `;
+    refundedCents += thisCents;
+    needCents -= thisCents;
+    count++;
+  }
+
+  if (refundedCents > 0) {
+    await sql`
+      UPDATE rentals
+      SET late_fee_charged = GREATEST(late_fee_charged - ${refundedCents / 100}, 0),
+          updated_at = now()
+      WHERE id = ${rentalId}
+    `;
+  }
+
+  // Full waive: also void any uncollected (failed) late-fee charges so the renter
+  // isn't left with a payment link / outstanding balance for a fee we've waived.
+  if (downTo <= 0) {
+    const failed = (await sql`
+      SELECT id, customer_id, amount FROM customer_charges
+      WHERE rental_id = ${rentalId} AND kind = 'late_fee'
+        AND status = 'failed' AND refunded_at IS NULL
+    `) as { id: number; customer_id: number | null; amount: string | number }[];
+    for (const f of failed) {
+      await sql`
+        UPDATE customer_charges SET refunded_at = now(), refunded_amount = amount
+        WHERE id = ${f.id}
+      `;
+      if (f.customer_id) {
+        await sql`
+          UPDATE customers
+          SET outstanding_balance = GREATEST(outstanding_balance - ${Number(f.amount)}, 0)
+          WHERE id = ${f.customer_id}
+        `;
+      }
+    }
+  }
+
+  return { refunded: refundedCents / 100, count };
+}
+
 async function flagUncollected(
   stripe: Stripe,
   r: { id: number; customer_id: number | null; stripe_customer_id: string | null },

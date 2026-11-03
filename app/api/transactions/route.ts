@@ -19,7 +19,20 @@ export async function GET(request: Request) {
                 FROM rentals r JOIN items i ON i.id = r.item_id
                WHERE r.transaction_id = t.id),
              ''
-           ) AS pieces
+           ) AS pieces,
+           COALESCE(
+             (SELECT json_agg(json_build_object(
+                       'item_id', i.id,
+                       'barcode', i.barcode,
+                       'title', COALESCE(NULLIF(i.name, ''), i.brand),
+                       'brand', i.brand,
+                       'description', i.description,
+                       'photo_url', i.photo_url
+                     ) ORDER BY i.brand)
+                FROM rentals r JOIN items i ON i.id = r.item_id
+               WHERE r.transaction_id = t.id),
+             '[]'
+           ) AS items
     FROM transactions t
     LEFT JOIN customers c ON c.id = t.customer_id
     ORDER BY t.created_at DESC, t.id DESC

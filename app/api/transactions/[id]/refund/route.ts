@@ -19,7 +19,7 @@ export async function POST(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
 
   const tx = (
-    await sql`SELECT id, total, payment_status, payment_ref, customer_id FROM transactions WHERE id = ${id}`
+    await sql`SELECT id, total, refund_amount, payment_status, payment_ref, customer_id FROM transactions WHERE id = ${id}`
   )[0];
   if (!tx) {
     return NextResponse.json({ error: "Order not found" }, { status: 404 });
@@ -38,6 +38,43 @@ export async function POST(_req: Request, ctx: Ctx) {
       { error: "No card charge on file to refund (this looks like a cash/manual order)." },
       { status: 400 }
     );
+  }
+
+  // Partial refund: refund a specific amount (e.g. correcting an overcharge)
+  // WITHOUT cancelling the order — the customer keeps the piece. Recorded on the
+  // transaction as refund_amount; the order stays 'collected' (net = total −
+  // refund_amount). Idempotency key includes the cents so retries don't double.
+  const body = await _req.json().catch(() => ({} as { amount?: number }));
+  if (body && typeof body.amount === "number" && body.amount > 0) {
+    const alreadyRefunded = Number(tx.refund_amount ?? 0);
+    const cents = Math.round(body.amount * 100);
+    const roomCents = Math.round((Number(tx.total) - alreadyRefunded) * 100);
+    if (cents > roomCents) {
+      return NextResponse.json(
+        { error: `Refund exceeds what's left on this order ($${(roomCents / 100).toFixed(2)}).` },
+        { status: 400 }
+      );
+    }
+    let partialRefundId: string;
+    try {
+      const refund = await stripe.refunds.create(
+        { payment_intent: tx.payment_ref, amount: cents },
+        { idempotencyKey: `refund_tx_${tx.id}_p_${cents}` }
+      );
+      partialRefundId = refund.id;
+    } catch (err) {
+      return NextResponse.json(
+        { error: `Stripe couldn't refund this: ${(err as Error).message}` },
+        { status: 400 }
+      );
+    }
+    await sql`
+      UPDATE transactions
+      SET refund_amount = ${(alreadyRefunded + cents / 100).toFixed(2)},
+          refunded_at = now(), stripe_refund_id = ${partialRefundId}
+      WHERE id = ${tx.id}
+    `;
+    return NextResponse.json({ ok: true, partial: true, amount: cents / 100, refund_id: partialRefundId });
   }
 
   let refundId: string;

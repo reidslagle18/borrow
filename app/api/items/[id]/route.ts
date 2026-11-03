@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { getProgram } from "@/lib/credits";
-import { replacementDefault } from "@/lib/types";
+import { replacementDefault, cleanStyleTags, cleanOccasionTags } from "@/lib/types";
+import { linkItemsIntoSet, unlinkFromSet } from "@/lib/sets";
+import { sendItemPickupRequest, sendPickupNotice } from "@/lib/email";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -11,7 +13,11 @@ export async function GET(_req: Request, ctx: Ctx) {
   await ensureSchema();
   const { id } = await ctx.params;
   const rows = await sql`
-    SELECT i.*, c.name AS consignor_name, a.name AS ambassador_name
+    SELECT i.*, c.name AS consignor_name, a.name AS ambassador_name,
+           EXISTS (
+             SELECT 1 FROM consignor_charges cc
+             WHERE cc.item_id = i.id AND cc.kind = 'initial'
+           ) AS initial_cleaned
     FROM items i
     LEFT JOIN consignors c ON c.id = i.consignor_id
     LEFT JOIN ambassadors a ON a.id = i.ambassador_id
@@ -31,6 +37,33 @@ export async function PATCH(request: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const b = await request.json();
 
+  // Apply the "initial clean before listing" charge after the fact — for when
+  // the intake checkbox was missed. Deducts the Cleaning & Care Fee from the
+  // consignor's earnings (same row the intake form creates). Idempotent: one
+  // 'initial' charge per piece.
+  if (b.action === "initial_clean") {
+    const it = (
+      await sql`SELECT id, ownership, consignor_id FROM items WHERE id = ${id}`
+    )[0];
+    if (!it) return NextResponse.json({ error: "Piece not found" }, { status: 404 });
+    if (it.ownership !== "consignment" || !it.consignor_id) {
+      return NextResponse.json(
+        { error: "Initial cleaning only applies to a consignment piece." },
+        { status: 400 }
+      );
+    }
+    const existing = await sql`
+      SELECT id FROM consignor_charges WHERE item_id = ${id} AND kind = 'initial'
+    `;
+    if (existing.length > 0) return NextResponse.json({ ok: true, already: true });
+    const fee = (await getProgram()).cleaning_fee;
+    await sql`
+      INSERT INTO consignor_charges (consignor_id, amount, kind, item_id, note)
+      VALUES (${it.consignor_id}, ${fee}, 'initial', ${id}, 'Initial clean before listing')
+    `;
+    return NextResponse.json({ ok: true, amount: fee });
+  }
+
   if (b.action === "return_to_consignor") {
     const live = await sql`
       SELECT id FROM rentals
@@ -42,11 +75,25 @@ export async function PATCH(request: Request, ctx: Ctx) {
         { status: 400 }
       );
     }
+    // Was this piece back because the consignor requested it? (Determines the
+    // automatic retrieval cleaning fee vs the manual dry-clean opt-in.)
+    const openReq = await sql`
+      SELECT id FROM retrieval_requests WHERE item_id = ${id} AND status = 'open'
+    `;
+    const hadOpenRetrieval = openReq.length > 0;
     const rows = await sql`
       UPDATE items SET
         status = 'retired',
+        retrieval_hold_date = NULL,
+        hold_start = NULL,
+        hold_end = NULL,
+        pickup_notice_sent_at = NULL,
+        pickup_reminder_sent_at = NULL,
+        storage_started_at = NULL,
+        storage_decided_at = NULL,
+        underperf_dismissed_at = NULL,
         condition_notes = COALESCE(condition_notes || E'\n', '') ||
-          '[' || CURRENT_DATE || '] Returned to consignor',
+          '[' || (now() AT TIME ZONE 'America/Chicago')::date || '] Returned to consignor',
         updated_at = now()
       WHERE id = ${id} AND ownership = 'consignment'
       RETURNING *
@@ -57,16 +104,144 @@ export async function PATCH(request: Request, ctx: Ctx) {
         { status: 400 }
       );
     }
-    // Opt-in dry clean at retrieval — only when the consignor agreed. Deducts
-    // the Cleaning & Care Fee amount from their earnings.
-    if (b.dry_clean && rows[0].consignor_id) {
-      const fee = (await getProgram()).cleaning_fee;
-      await sql`
-        INSERT INTO consignor_charges (consignor_id, amount, kind, item_id, note)
-        VALUES (${rows[0].consignor_id}, ${fee}, 'retrieval', ${id}, 'Dry clean at retrieval')
-      `;
+    if (rows[0].consignor_id) {
+      const program = await getProgram();
+      if (hadOpenRetrieval) {
+        // Completing a consignor-requested retrieval: the configured cleaning
+        // fee they were shown before confirming (Borrow cleans before returning).
+        await sql`
+          INSERT INTO consignor_charges (consignor_id, amount, kind, item_id, note)
+          VALUES (${rows[0].consignor_id}, ${program.retrieval_cleaning_fee}, 'retrieval', ${id}, 'Retrieval cleaning fee')
+        `;
+      } else if (b.dry_clean) {
+        // No request on file — the manual dry-clean opt-in still applies.
+        await sql`
+          INSERT INTO consignor_charges (consignor_id, amount, kind, item_id, note)
+          VALUES (${rows[0].consignor_id}, ${program.cleaning_fee}, 'retrieval', ${id}, 'Dry clean at retrieval')
+        `;
+      }
     }
+    // Close any open retrieval request now that it's handled.
+    await sql`UPDATE retrieval_requests SET status = 'done', resolved_at = now() WHERE item_id = ${id} AND status = 'open'`;
     return NextResponse.json(rows[0]);
+  }
+
+  // Owner approves the underperformance pickup notice → email the consignor,
+  // stamp the send time, and start the 30-day pickup clock. Nothing is emailed
+  // until the owner explicitly approves here.
+  if (b.action === "approve_pickup_notice") {
+    const rows = await sql`
+      SELECT i.id, COALESCE(NULLIF(i.name, ''), i.brand) AS name,
+             c.name AS consignor_name, c.email AS consignor_email
+      FROM items i LEFT JOIN consignors c ON c.id = i.consignor_id
+      WHERE i.id = ${id} AND i.ownership = 'consignment'
+    `;
+    if (rows.length === 0) {
+      return NextResponse.json(
+        { error: "Only consignment pieces can be sent a pickup notice" },
+        { status: 400 }
+      );
+    }
+    const piece = rows[0];
+    if (!piece.consignor_email) {
+      return NextResponse.json(
+        { error: "No email on file for this consignor — reach out directly instead." },
+        { status: 400 }
+      );
+    }
+    const deadline = new Date(Date.now() + 30 * 24 * 3600 * 1000);
+    const deadlineDate = deadline.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+    const sent = await sendPickupNotice({
+      to: String(piece.consignor_email),
+      consignorName: String(piece.consignor_name || "there"),
+      itemName: String(piece.name),
+      deadlineDate,
+    });
+    if (!sent.sent) {
+      return NextResponse.json(
+        { error: "Couldn't send the email — check the email setup and try again." },
+        { status: 502 }
+      );
+    }
+    await sql`
+      UPDATE items SET
+        pickup_notice_sent_at = now(),
+        pickup_reminder_sent_at = NULL,
+        underperf_dismissed_at = NULL,
+        condition_notes = COALESCE(condition_notes || E'\n', '') ||
+          '[' || (now() AT TIME ZONE 'America/Chicago')::date || '] Pickup notice sent (underperforming)',
+        updated_at = now()
+      WHERE id = ${id}
+    `;
+    return NextResponse.json({ ok: true, pickup_deadline: deadline.toISOString().slice(0, 10) });
+  }
+
+  // Owner gives an underperforming piece more time — resets its clock so it
+  // won't re-flag until it crosses the threshold again from now.
+  if (b.action === "dismiss_underperformance") {
+    await sql`UPDATE items SET underperf_dismissed_at = now(), updated_at = now() WHERE id = ${id}`;
+    return NextResponse.json({ ok: true });
+  }
+
+  // Owner acknowledges an unclaimed-in-storage piece (final decision is made
+  // off-system) so it stops nagging in the notifications feed.
+  if (b.action === "acknowledge_unclaimed") {
+    await sql`UPDATE items SET storage_decided_at = now(), updated_at = now() WHERE id = ${id}`;
+    return NextResponse.json({ ok: true });
+  }
+
+  // Studio asks the consignor to collect an under-performing piece: emails
+  // them and stamps the ask so the "not renting" notification stops nagging.
+  // The piece stays live until it's physically returned (then use
+  // "return_to_consignor" to retire it).
+  if (b.action === "request_pickup") {
+    const rows = await sql`
+      SELECT i.id, COALESCE(NULLIF(i.name, ''), i.brand) AS brand,
+             c.name AS consignor_name, c.email AS consignor_email
+      FROM items i LEFT JOIN consignors c ON c.id = i.consignor_id
+      WHERE i.id = ${id} AND i.ownership = 'consignment'
+    `;
+    if (rows.length === 0) {
+      return NextResponse.json(
+        { error: "Only consignment pieces can be sent back to a consignor" },
+        { status: 400 }
+      );
+    }
+    const piece = rows[0];
+    if (!piece.consignor_email) {
+      return NextResponse.json(
+        {
+          error:
+            "No email on file for this consignor — reach out to them directly to arrange pickup.",
+        },
+        { status: 400 }
+      );
+    }
+    const sent = await sendItemPickupRequest({
+      to: String(piece.consignor_email),
+      consignorName: String(piece.consignor_name || "there"),
+      itemBrand: String(piece.brand),
+    });
+    if (!sent.sent) {
+      return NextResponse.json(
+        { error: "Couldn't send the email — check the email setup and try again." },
+        { status: 502 }
+      );
+    }
+    const updated = await sql`
+      UPDATE items SET
+        pickup_requested_at = now(),
+        condition_notes = COALESCE(condition_notes || E'\n', '') ||
+          '[' || (now() AT TIME ZONE 'America/Chicago')::date || '] Asked consignor to collect (low rentals)',
+        updated_at = now()
+      WHERE id = ${id}
+      RETURNING *
+    `;
+    return NextResponse.json(updated[0]);
   }
 
   // A consignor borrows their own piece back — free, open-ended, blocked from
@@ -81,11 +256,23 @@ export async function PATCH(request: Request, ctx: Ctx) {
         { status: 400 }
       );
     }
+    const openTakeReq = await sql`
+      SELECT id FROM retrieval_requests WHERE item_id = ${id} AND status = 'open'
+    `;
+    const hadOpenTake = openTakeReq.length > 0;
     const rows = await sql`
       UPDATE items SET
         status = 'with_consignor',
+        retrieval_hold_date = NULL,
+        hold_start = NULL,
+        hold_end = NULL,
+        pickup_notice_sent_at = NULL,
+        pickup_reminder_sent_at = NULL,
+        storage_started_at = NULL,
+        storage_decided_at = NULL,
+        underperf_dismissed_at = NULL,
         condition_notes = COALESCE(condition_notes || E'\n', '') ||
-          '[' || CURRENT_DATE || '] Out to consignor — must be returned clean',
+          '[' || (now() AT TIME ZONE 'America/Chicago')::date || '] Out to consignor — must be returned clean',
         updated_at = now()
       WHERE id = ${id} AND ownership = 'consignment'
         AND status NOT IN ('retired','rented')
@@ -97,6 +284,16 @@ export async function PATCH(request: Request, ctx: Ctx) {
         { status: 400 }
       );
     }
+    // Fulfilling a consignor-requested retrieval → the configured cleaning fee.
+    if (hadOpenTake && rows[0].consignor_id) {
+      const program = await getProgram();
+      await sql`
+        INSERT INTO consignor_charges (consignor_id, amount, kind, item_id, note)
+        VALUES (${rows[0].consignor_id}, ${program.retrieval_cleaning_fee}, 'retrieval', ${id}, 'Retrieval cleaning fee')
+      `;
+    }
+    // Close any open retrieval request now that it's handled.
+    await sql`UPDATE retrieval_requests SET status = 'done', resolved_at = now() WHERE item_id = ${id} AND status = 'open'`;
     return NextResponse.json(rows[0]);
   }
 
@@ -105,7 +302,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
       UPDATE items SET
         status = 'available',
         condition_notes = COALESCE(condition_notes || E'\n', '') ||
-          '[' || CURRENT_DATE || '] Returned by consignor',
+          '[' || (now() AT TIME ZONE 'America/Chicago')::date || '] Returned by consignor',
         updated_at = now()
       WHERE id = ${id} AND status = 'with_consignor'
       RETURNING *
@@ -116,6 +313,43 @@ export async function PATCH(request: Request, ctx: Ctx) {
         { status: 400 }
       );
     }
+    return NextResponse.json(rows[0]);
+  }
+
+  // Mark a consignor self-hold as returned. The owner is prompted clean vs
+  // needs-cleaning: clean → straight back on the rack (available); needs
+  // cleaning → into cleaning AND the cleaning fee is deducted from the
+  // consignor's earnings ledger. No late fee ever applies to a self-hold.
+  if (b.action === "hold_return") {
+    const needsCleaning = b.needs_cleaning === true;
+    const rows = await sql`
+      UPDATE items SET
+        status = ${needsCleaning ? "cleaning" : "available"},
+        hold_start = NULL,
+        hold_end = NULL,
+        retrieval_hold_date = NULL,
+        condition_notes = COALESCE(condition_notes || E'\n', '') ||
+          '[' || (now() AT TIME ZONE 'America/Chicago')::date || '] Returned from consignor hold' ||
+          ${needsCleaning ? " (needs cleaning)" : " (clean)"},
+        updated_at = now()
+      WHERE id = ${id} AND status = 'consignor_hold'
+      RETURNING *
+    `;
+    if (rows.length === 0) {
+      return NextResponse.json(
+        { error: "This piece isn't currently on a consignor hold" },
+        { status: 400 }
+      );
+    }
+    if (needsCleaning && rows[0].consignor_id) {
+      const program = await getProgram();
+      await sql`
+        INSERT INTO consignor_charges (consignor_id, amount, kind, item_id, note)
+        VALUES (${rows[0].consignor_id}, ${program.retrieval_cleaning_fee}, 'retrieval', ${id}, 'Cleaning fee — self-hold return')
+      `;
+    }
+    // Close the open self-hold request now that the piece is back.
+    await sql`UPDATE retrieval_requests SET status = 'done', resolved_at = now() WHERE item_id = ${id} AND status = 'open'`;
     return NextResponse.json(rows[0]);
   }
 
@@ -136,6 +370,55 @@ export async function PATCH(request: Request, ctx: Ctx) {
       );
     }
     return NextResponse.json(rows[0]);
+  }
+
+  // Staff-side approval resolution (e.g. after an in-person dispute review):
+  // approve the value directly, or reset a disputed piece back to pending so
+  // the consignor can approve it again.
+  if (b.action === "approval") {
+    // Staff approves the value directly (e.g. in person).
+    if (b.approval_action === "approve") {
+      const rows = await sql`
+        UPDATE items SET approval_status = 'approved', approved_at = now(),
+          disputed_at = NULL, disputed_value = NULL, dispute_note = NULL, dispute_outcome = NULL
+        WHERE id = ${id} AND ownership = 'consignment' RETURNING *
+      `;
+      if (rows.length === 0)
+        return NextResponse.json({ error: "Not a consignment piece" }, { status: 400 });
+      return NextResponse.json(rows[0]);
+    }
+    // Accept the consignor's suggested value → becomes the replacement value,
+    // back to pending for their final sign-off.
+    if (b.approval_action === "accept_suggested") {
+      const rows = await sql`
+        UPDATE items SET
+          replacement_value = disputed_value,
+          replacement_value_manual = true,
+          approval_status = 'pending',
+          dispute_outcome = 'accepted',
+          disputed_at = NULL
+        WHERE id = ${id} AND ownership = 'consignment' AND disputed_value IS NOT NULL
+        RETURNING *
+      `;
+      if (rows.length === 0)
+        return NextResponse.json({ error: "No suggested value to accept" }, { status: 400 });
+      return NextResponse.json(rows[0]);
+    }
+    // Reject the suggestion → keep the admin value, back to pending, note the outcome.
+    if (b.approval_action === "reject_suggested") {
+      const rows = await sql`
+        UPDATE items SET
+          approval_status = 'pending',
+          dispute_outcome = 'rejected',
+          disputed_at = NULL
+        WHERE id = ${id} AND ownership = 'consignment'
+        RETURNING *
+      `;
+      if (rows.length === 0)
+        return NextResponse.json({ error: "Not a consignment piece" }, { status: 400 });
+      return NextResponse.json(rows[0]);
+    }
+    return NextResponse.json({ error: "Unknown approval_action" }, { status: 400 });
   }
 
   if (!b.barcode || !b.brand || !b.size || !b.tier || b.rental_price == null) {
@@ -160,6 +443,12 @@ export async function PATCH(request: Request, ctx: Ctx) {
   const sentRepl = ceilOrNull(b.replacement_value);
   const replacementManual = b.replacement_value_manual === true && sentRepl != null;
   const replacement = replacementManual ? (sentRepl as number) : replDefault;
+
+  // Editing is never blocked — a consignment piece stays "Pending Consignor
+  // Approval" until the consignor approves; go-live is gated at the shop feed +
+  // booking layer, not here. A piece that BECOMES consignment (and has no
+  // approval yet) enters 'pending'; a piece leaving consignment clears it.
+  const ownership = b.ownership || "owned";
   // Stamp the retirement date when a piece is first moved to retired.
   const retiredAt = b.status === "retired" ? b.retired_at ?? null : null;
 
@@ -176,6 +465,9 @@ export async function PATCH(request: Request, ctx: Ctx) {
         fabric = ${b.fabric || null},
         fit_notes = ${b.fit_notes || null},
         silhouette = ${b.silhouette || null},
+        style_tags = ${cleanStyleTags(b.style_tags)},
+        occasion_tags = ${cleanOccasionTags(b.occasion_tags)},
+        sub_occasion_tags = ${cleanOccasionTags(b.sub_occasion_tags)},
         new_with_tags = ${!!b.new_with_tags},
         ambassador_id = ${b.ambassador_id ?? null},
         tier = ${b.tier},
@@ -184,6 +476,11 @@ export async function PATCH(request: Request, ctx: Ctx) {
         retail_value = ${retailValue},
         replacement_value = ${replacement},
         replacement_value_manual = ${replacementManual},
+        approval_status = CASE
+          WHEN ${ownership} = 'consignment' AND approval_status IS NULL THEN 'pending'
+          WHEN ${ownership} <> 'consignment' THEN NULL
+          ELSE approval_status
+        END,
         acquisition_date = ${b.acquisition_date || null},
         source = ${b.source || null},
         condition_notes = ${b.condition_notes || null},
@@ -195,7 +492,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
         photo_url = ${cover},
         photos = ${photos},
         retired_at = CASE
-          WHEN ${b.status} = 'retired' THEN COALESCE(${retiredAt}, retired_at, CURRENT_DATE)
+          WHEN ${b.status} = 'retired' THEN COALESCE(${retiredAt}, retired_at, (now() AT TIME ZONE 'America/Chicago')::date)
           ELSE NULL
         END,
         updated_at = now()
@@ -213,6 +510,14 @@ export async function PATCH(request: Request, ctx: Ctx) {
   }
   if (rows.length === 0) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  // Matching-set link/unlink (kept separate so a normal edit never disturbs it).
+  if (b.set_unlink === true) {
+    await unlinkFromSet(id);
+    rows[0].set_group = null;
+  } else if (b.set_partner_id) {
+    const group = await linkItemsIntoSet(id, String(b.set_partner_id));
+    if (group) rows[0].set_group = group;
   }
   return NextResponse.json(rows[0]);
 }

@@ -1,13 +1,10 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { sendReceipt, sendConsignorRentedEmail, ReceiptLine } from "@/lib/email";
-import { CONSIGNOR_SHARE, salesTax } from "@/lib/types";
-import {
-  getProgram,
-  ensureCurrentPeriod,
-  remainingCredits,
-  isBlackout,
-} from "@/lib/credits";
+import { consignorShare, salesTax, extraRentalFee, closedPickupDate, nextOpenDate } from "@/lib/types";
+import { getProgram } from "@/lib/credits";
+import { activeCampaignForCode } from "@/lib/campaigns";
+import { todayISO } from "@/lib/dates";
 
 interface CheckoutBody {
   customer_id?: number | null;
@@ -16,12 +13,13 @@ interface CheckoutBody {
   due_date?: string;
   agreement_accepted?: boolean;
   agreement_name?: string;
+  charge_auth_accepted?: boolean;
   receipt_email?: string;
   payment_method?: string;
   payment_ref?: string;
-  referral_code?: string;
   stripe_customer_id?: string;
   stripe_payment_method_id?: string;
+  campaign_code?: string | null;
   // "terminal" → payment is collected on the tap reader right after this call,
   // so the transaction starts as pending and its rentals start unpaid; the
   // Terminal poll endpoint flips both once the tap succeeds.
@@ -53,9 +51,33 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  // A closed PICKUP day is blocked (nobody's there to hand it over). A closed
+  // RETURN day is fine — roll the due date to the next open day (bring it back
+  // then) at no penalty. The extra-day fee is computed on the ORIGINAL due, so
+  // the closure roll is never charged.
+  const closeProg = await getProgram();
+  const closedPickup = closedPickupDate(
+    b.start_date,
+    closeProg.store_closed_dates,
+    closeProg.store_closed_weekdays
+  );
+  if (closedPickup) {
+    return NextResponse.json(
+      { error: `The studio is closed on ${closedPickup}, so the pickup can't be that day. Pick a different start date.` },
+      { status: 409 }
+    );
+  }
+  const originalDueDate = b.due_date;
+  b.due_date = nextOpenDate(b.due_date, closeProg.store_closed_dates, closeProg.store_closed_weekdays);
   if (!b.agreement_accepted) {
     return NextResponse.json(
       { error: "The rental agreement must be accepted." },
+      { status: 400 }
+    );
+  }
+  if (!b.charge_auth_accepted) {
+    return NextResponse.json(
+      { error: "The automatic-charge authorization must be accepted." },
       { status: 400 }
     );
   }
@@ -99,74 +121,52 @@ export async function POST(request: Request) {
     );
   }
 
-  // --- Ambassador perk credits ---------------------------------------------
-  // If the customer is a linked ambassador (and the start date isn't a peak
-  // blackout day), apply credits per piece: free, then bonus (also free), then
-  // the $6 cleaning rate, then full price. Pricier pieces get the free credits
-  // first to maximize the ambassador's benefit.
-  type Plan = { item: (typeof items)[number]; charge: number; waiver: boolean; kind: string };
-  let plan: Plan[];
-  let ambassador: { id: number } | null = null;
   const program = await getProgram();
-  const blackout = isBlackout(b.start_date, program);
 
-  let amb = b.customer_id
-    ? (await sql`SELECT * FROM ambassadors WHERE customer_id = ${b.customer_id} LIMIT 1`)[0]
-    : null;
-
-  if (amb && !blackout) {
-    amb = await ensureCurrentPeriod(amb);
-    const rem = remainingCredits(amb, program);
-    let { free, bonus, rate } = rem;
-    let freeUsed = 0,
-      bonusUsed = 0,
-      rateUsed = 0;
-    ambassador = { id: amb.id };
-
-    const ordered = [...items].sort(
-      (a, c) => Number(c.rental_price) - Number(a.rental_price)
-    );
-    plan = ordered.map((item) => {
-      if (free > 0) {
-        free--;
-        freeUsed++;
-        return { item, charge: 0, waiver: false, kind: "free" };
-      }
-      if (bonus > 0) {
-        bonus--;
-        bonusUsed++;
-        return { item, charge: 0, waiver: false, kind: "bonus" };
-      }
-      if (rate > 0) {
-        rate--;
-        rateUsed++;
-        return { item, charge: program.cleaning_rate, waiver: false, kind: "rate" };
-      }
-      return { item, charge: Number(item.rental_price), waiver: true, kind: "full" };
-    });
-
-    await sql`
-      UPDATE ambassadors SET
-        free_used = free_used + ${freeUsed},
-        bonus_used = bonus_used + ${bonusUsed},
-        rate_used = rate_used + ${rateUsed}
-      WHERE id = ${amb.id}
-    `;
-  } else {
-    plan = items.map((item) => ({
-      item,
-      charge: Number(item.rental_price),
-      waiver: true,
-      kind: "full",
-    }));
+  // Reservation guard (in-store): a reserved piece CAN be rented out, as long as
+  // this rental is returned AND cleaned (turnaround) before the reservation's
+  // pickup. Only blocks when the actual dates wouldn't leave that cleaning gap —
+  // not a blanket days-out cutoff. (Raw date overlaps are already caught above.)
+  const turnaround = Math.max(0, Math.floor(Number(program.turnaround_days) || 0));
+  for (const item of items) {
+    const reservedFor = (
+      await sql`
+        SELECT to_char(MIN(r.start_date), 'YYYY-MM-DD') AS pickup
+        FROM rentals r
+        WHERE r.item_id = ${item.id}
+          AND r.status = 'reserved'
+          AND r.start_date >= (now() AT TIME ZONE 'America/Chicago')::date
+          AND ${b.start_date}::date <= r.start_date
+          AND (${b.due_date}::date + ${turnaround}::int) >= r.start_date
+      `
+    )[0]?.pickup as string | undefined;
+    if (reservedFor) {
+      return NextResponse.json(
+        {
+          error: `${item.brand} is reserved for ${reservedFor} — rent it out only if it's returned and cleaned before then.`,
+        },
+        { status: 409 }
+      );
+    }
   }
 
-  const cleaningFee = program.cleaning_fee;
+  // Each piece rents at its price (Cleaning & Care Fee already included). A
+  // rental booked longer than the standard week adds $EXTRA_DAY_RATE per item
+  // for each extra day (kept by Borrow, like a late fee — not consignor-shared).
+  const extraFeePerPiece = extraRentalFee(b.start_date, originalDueDate);
+  type Plan = { item: (typeof items)[number]; charge: number; extraFee: number; kind: string };
+  const plan: Plan[] = items.map((item) => ({
+    item,
+    charge: Number(item.rental_price),
+    extraFee: extraFeePerPiece,
+    kind: "full",
+  }));
+
   const subtotal = plan.reduce((s, p) => s + p.charge, 0);
-  const waiverTotal = plan.filter((p) => p.waiver).length * cleaningFee;
-  // Sales tax applies to the rental price only — not the Cleaning & Care Fee.
+  const extraFeeTotal = plan.reduce((s, p) => s + p.extraFee, 0);
+  const waiverTotal = 0; // Cleaning & Care Fee is already included in the rental price.
   const taxTotal = salesTax(subtotal, program.sales_tax_rate);
-  const grossTotal = subtotal + waiverTotal + taxTotal;
+  const grossTotal = subtotal + extraFeeTotal + taxTotal;
 
   // Apply any store credit the customer has, up to the order total.
   let creditApplied = 0;
@@ -183,17 +183,25 @@ export async function POST(request: Request) {
   const paymentStatus = isTerminal ? "pending" : "collected";
   const paymentMethod = isTerminal ? "terminal" : b.payment_method || "card_reader";
 
+  // A future pickup date is a RESERVATION: they pay in full now to hold the
+  // piece, it shows as "Reserved" (not rented) until they come in and it's
+  // marked picked up, and it's covered by the 48-hour cancellation refund.
+  // A same-day checkout is an immediate rental (piece goes straight to Rented).
+  const reserving = b.start_date > todayISO();
+
   // One transaction row for the whole checkout.
   const txRows = await sql`
     INSERT INTO transactions (
       customer_id, piece_count, subtotal, waiver_total, tax_total, total, store_credit_applied,
       start_date, due_date, payment_method, payment_status, payment_ref,
-      agreement_accepted, agreement_name, agreement_accepted_at, receipt_email
+      agreement_accepted, agreement_name, agreement_accepted_at,
+      charge_auth_accepted, charge_auth_accepted_at, receipt_email
     ) VALUES (
       ${b.customer_id ?? null}, ${items.length}, ${subtotal}, ${waiverTotal}, ${taxTotal}, ${total},
       ${creditApplied}, ${b.start_date}, ${b.due_date}, ${paymentMethod},
       ${paymentStatus}, ${b.payment_ref || null},
-      true, ${b.agreement_name || null}, now(), ${b.receipt_email || null}
+      true, ${b.agreement_name || null}, now(),
+      true, now(), ${b.receipt_email || null}
     )
     RETURNING *
   `;
@@ -208,59 +216,56 @@ export async function POST(request: Request) {
     `;
   }
 
+  // Campaign tag (no discount / no price change — just flags the order). Only
+  // applies if the code is a campaign active for today's payment date.
+  const campaign = await activeCampaignForCode(b.campaign_code);
+  const campaignCode = campaign?.code ?? null;
+
   // One active rental per piece, linked to the transaction, and flip each
   // piece to Rented Out (mirrors the rental "pickup" action).
   for (const p of plan) {
-    const rentalRows = await sql`
+    await sql`
       INSERT INTO rentals (
         item_id, customer_id, start_date, due_date, status,
-        rental_price, damage_waiver, cleaning_fee, sales_tax, source, transaction_id,
-        stripe_customer_id, stripe_payment_method_id, paid
+        rental_price, damage_waiver, cleaning_fee, extra_days_fee, sales_tax, source, transaction_id,
+        stripe_customer_id, stripe_payment_method_id, paid, campaign_code
       ) VALUES (
         ${p.item.id}, ${b.customer_id ?? null}, ${b.start_date}, ${b.due_date},
-        'active', ${p.charge}, ${p.waiver}, ${p.waiver ? cleaningFee : 0},
+        ${reserving ? "reserved" : "active"}, ${p.charge}, false, 0, ${p.extraFee},
         ${salesTax(p.charge, program.sales_tax_rate)}, 'checkout', ${tx.id},
-        ${b.stripe_customer_id || null}, ${b.stripe_payment_method_id || null}, ${!isTerminal}
+        ${b.stripe_customer_id || null}, ${b.stripe_payment_method_id || null}, ${!isTerminal}, ${campaignCode}
       )
-      RETURNING id
     `;
+    // Reserved pieces are held (not counted as a rental yet); the pickup action
+    // bumps the count and flips them to Rented when the customer collects.
+    if (reserving) {
+      await sql`
+        UPDATE items SET status = 'reserved', updated_at = now()
+        WHERE id = ${p.item.id}
+      `;
+    } else {
+      await sql`
+        UPDATE items SET status = 'rented', rental_count = rental_count + 1, updated_at = now()
+        WHERE id = ${p.item.id}
+      `;
+    }
+  }
+
+  // Log the campaign tag on this order (audit trail).
+  if (campaignCode) {
     await sql`
-      UPDATE items SET status = 'rented', rental_count = rental_count + 1, updated_at = now()
-      WHERE id = ${p.item.id}
-    `;
-    // Free / bonus rentals collect no Cleaning & Care Fee, so BORROW absorbs
-    // the cleaning cost — log it as an expense (the consignor is never charged).
-    if (p.kind === "free" || p.kind === "bonus") {
-      await sql`
-        INSERT INTO cleaning_expenses (amount, reason, item_id, rental_id, consignor_id)
-        VALUES (
-          ${cleaningFee}, ${"free_ambassador_rental"}, ${p.item.id}, ${rentalRows[0].id},
-          ${p.item.ownership === "consignment" ? p.item.consignor_id ?? null : null}
-        )
-      `;
-    }
+      INSERT INTO campaign_tag_log (transaction_id, code, action, actor)
+      VALUES (${tx.id}, ${campaignCode}, 'checkout', 'in-store checkout')
+    `.catch(() => {});
   }
 
-  // Referral attribution: if a referral code was entered, link this rental +
-  // customer to the ambassador whose code it is (tracking only, no auto-perk).
-  let referredBy: string | null = null;
-  const refCode = (b.referral_code || "").trim().toUpperCase();
-  if (refCode) {
-    const refAmb = await sql`
-      SELECT id, name FROM ambassadors WHERE upper(referral_code) = ${refCode} LIMIT 1
-    `;
-    if (refAmb.length > 0) {
-      await sql`
-        INSERT INTO ambassador_referrals (ambassador_id, customer_id, transaction_id)
-        VALUES (${refAmb[0].id}, ${b.customer_id ?? null}, ${tx.id})
-      `;
-      referredBy = refAmb[0].name;
-    }
-  }
-
-  // Notify consignors whose pieces just rented (best-effort, free email).
-  const consigned = await sql`
-    SELECT COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.rental_price, c.name, c.email, c.portal_code
+  // Notify consignors whose pieces just rented (best-effort, free email). For a
+  // reservation we hold this until the piece is actually picked up (the pickup
+  // action sends it then), so consignors aren't told it rented before it goes out.
+  const consigned = reserving
+    ? []
+    : await sql`
+    SELECT COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.rental_price, c.name, c.email, c.portal_code, c.consignor_rate
     FROM items i JOIN consignors c ON c.id = i.consignor_id
     WHERE i.id = ANY(${itemIds}) AND i.ownership = 'consignment' AND c.email IS NOT NULL
   `;
@@ -269,7 +274,7 @@ export async function POST(request: Request) {
       to: c.email,
       consignorName: c.name,
       brand: c.brand,
-      earned: Math.round(Number(c.rental_price) * CONSIGNOR_SHARE * 100) / 100,
+      earned: Math.round(Number(c.rental_price) * consignorShare(c.consignor_rate) * 100) / 100,
       portalCode: c.portal_code ?? null,
     });
     console.log(`[checkout] consignor email to ${c.email}:`, JSON.stringify(r));
@@ -294,7 +299,7 @@ export async function POST(request: Request) {
       brand: p.item.brand,
       barcode: p.item.barcode || p.item.id,
       rental_price: p.charge,
-      waiver: p.waiver ? cleaningFee : 0,
+      waiver: 0,
     }));
     const result = await sendReceipt({
       to: recipient,
@@ -302,6 +307,7 @@ export async function POST(request: Request) {
       lines,
       subtotal,
       waiverTotal,
+      extraFeeTotal,
       total,
       creditApplied,
       startDate: b.start_date,
@@ -319,10 +325,20 @@ export async function POST(request: Request) {
     {
       transaction: tx,
       email_sent: emailSent,
-      ambassador_applied: !!ambassador,
-      blackout: !!amb && blackout,
-      referred_by: referredBy,
       credit_applied: creditApplied,
+      credit_remaining:
+        b.customer_id != null
+          ? Math.max(
+              0,
+              Math.round(
+                (Number(
+                  (
+                    await sql`SELECT store_credit FROM customers WHERE id = ${b.customer_id}`
+                  )[0]?.store_credit ?? 0
+                )) * 100
+              ) / 100
+            )
+          : 0,
       breakdown: plan.map((p) => ({
         barcode: p.item.barcode || p.item.id,
         kind: p.kind,

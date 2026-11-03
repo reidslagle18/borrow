@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
 import CameraScanner from "./CameraScanner";
 import PhotoCropper from "./PhotoCropper";
+import ConsignorAgreementModal from "./ConsignorAgreementModal";
 import { beep } from "@/lib/scanSound";
 import {
   Item,
@@ -11,7 +12,7 @@ import {
   Tier,
   Ownership,
   ItemStatus,
-  TIERS,
+  Occasion,
   SIZES,
   EVENT_TYPES,
   STATUSES,
@@ -19,6 +20,7 @@ import {
   SILHOUETTES,
   COLORS,
   replacementDefault,
+  suggestedRentalPrice,
 } from "@/lib/types";
 
 /** Downscale a photo client-side so iPad camera shots upload fast. */
@@ -72,21 +74,40 @@ export default function ItemForm({
   const [barcode, setBarcode] = useState(item?.barcode ?? "");
   const [name, setName] = useState(item?.name ?? "");
   const [brand, setBrand] = useState(item?.brand ?? "");
-  const [description, setDescription] = useState(item?.description ?? "");
+  // Description / fabric / fit notes are no longer entered at intake, but any
+  // existing values are preserved untouched on save.
+  const description = item?.description ?? "";
   const [size, setSize] = useState(item?.size ?? "");
   const [colors, setColors] = useState<string[]>(
     item?.color
       ? item.color.split(",").map((c) => c.trim()).filter(Boolean)
       : []
   );
-  const [fabric, setFabric] = useState(item?.fabric ?? "");
-  const [fitNotes, setFitNotes] = useState(item?.fit_notes ?? "");
-  const [silhouette, setSilhouette] = useState(item?.silhouette ?? "");
-  const [newWithTags, setNewWithTags] = useState(item?.new_with_tags ?? false);
-  const [tier, setTier] = useState<Tier>(item?.tier ?? "standard");
-  const [rentalPrice, setRentalPrice] = useState<string>(
-    item ? String(item.rental_price) : String(TIERS[0].price)
+  const fabric = item?.fabric ?? "";
+  const fitNotes = item?.fit_notes ?? "";
+  const [silhouettes, setSilhouettes] = useState<string[]>(
+    item?.silhouette
+      ? item.silhouette.split(",").map((s) => s.trim()).filter(Boolean)
+      : []
   );
+  const [styleTags, setStyleTags] = useState<string[]>(item?.style_tags ?? []);
+  const [tagInput, setTagInput] = useState("");
+  function addTag(raw: string) {
+    const t = raw.trim().toLowerCase();
+    if (t && !styleTags.includes(t)) setStyleTags((prev) => [...prev, t]);
+    setTagInput("");
+  }
+  const [newWithTags, setNewWithTags] = useState(item?.new_with_tags ?? false);
+  // Tier is retired from the UI but kept on the record for historical reference.
+  // Existing pieces keep their stored tier; new pieces default to 'standard'
+  // (unused for pricing — price now comes from retail value / manual entry).
+  const tier: Tier = item?.tier ?? "standard";
+  const [rentalPrice, setRentalPrice] = useState<string>(
+    item?.rental_price != null ? String(item.rental_price) : ""
+  );
+  // The retail-based suggestion is dismissed once accepted or waved off, so it
+  // stops nagging. Opening a piece never changes its price on its own.
+  const [priceSuggestionDismissed, setPriceSuggestionDismissed] = useState(false);
   const [purchaseCost, setPurchaseCost] = useState<string>(
     item?.purchase_cost != null ? String(item.purchase_cost) : ""
   );
@@ -105,12 +126,21 @@ export default function ItemForm({
     item?.acquisition_date ?? ""
   );
   const [source, setSource] = useState(item?.source ?? "");
-  const [ambassadorId, setAmbassadorId] = useState<number | "">(
-    item?.ambassador_id ?? ""
-  );
-  const [ambassadors, setAmbassadors] = useState<
-    { id: number; name: string }[]
-  >([]);
+  // Matching-set linking.
+  const [allItems, setAllItems] = useState<Item[]>([]);
+  // Suggest previously-used style tags as you type, to keep tagging consistent.
+  const tagSuggestions = useMemo(() => {
+    const q = tagInput.trim().toLowerCase();
+    const all = Array.from(
+      new Set(allItems.flatMap((i) => i.style_tags ?? []))
+    ).sort();
+    const pool = all.filter((t) => !styleTags.includes(t));
+    return (q ? pool.filter((t) => t.includes(q)) : pool).slice(0, 8);
+  }, [allItems, tagInput, styleTags]);
+  const [setPartnerId, setSetPartnerId] = useState<string>("");
+  const [setUnlink, setSetUnlink] = useState(false);
+  const [setQuery, setSetQuery] = useState("");
+  const [setListOpen, setSetListOpen] = useState(false);
   const [conditionNotes, setConditionNotes] = useState(
     item?.condition_notes ?? ""
   );
@@ -124,6 +154,16 @@ export default function ItemForm({
   const [consignorListOpen, setConsignorListOpen] = useState(false);
   const [eventTypes, setEventTypes] = useState<string[]>(
     item?.event_types ?? []
+  );
+  // Occasion / sub-occasion tagging (config-driven; owner edits occasions in
+  // Settings). occasionTags hold top-level names; subOccasionTags hold
+  // namespaced "Occasion:Sub" values.
+  const [occasions, setOccasions] = useState<Occasion[]>([]);
+  const [occasionTags, setOccasionTags] = useState<string[]>(
+    item?.occasion_tags ?? []
+  );
+  const [subOccasionTags, setSubOccasionTags] = useState<string[]>(
+    item?.sub_occasion_tags ?? []
   );
   const [status, setStatus] = useState<ItemStatus>(item?.status ?? "available");
   const [location, setLocation] = useState(item?.location ?? "");
@@ -146,6 +186,9 @@ export default function ItemForm({
   const fileRef = useRef<HTMLInputElement>(null);
   const barcodeRef = useRef<HTMLInputElement>(null);
   const [scanOpen, setScanOpen] = useState(false);
+  // Consignor agreement signing + per-piece replacement-value confirmation.
+  const [agreementOpen, setAgreementOpen] = useState(false);
+  const [signedIds, setSignedIds] = useState<Set<number>>(new Set());
 
   // Keep replacement value following the default until it's hand-edited.
   const replDefault = replacementDefault(
@@ -168,24 +211,55 @@ export default function ItemForm({
     }
   }, []);
 
-  // Load ambassadors so a piece can be attributed to whoever sourced it.
+  // Load the piece list so this one can be linked to its matching set-mate.
   useEffect(() => {
     (async () => {
-      const res = await fetch("/api/ambassadors");
-      if (res.ok) {
-        const data = await res.json();
-        setAmbassadors(
-          data.map((a: { id: number; name: string }) => ({
-            id: a.id,
-            name: a.name,
-          }))
-        );
+      const res = await fetch("/api/items");
+      if (res.ok) setAllItems(await res.json());
+    })();
+  }, []);
+
+  // Load the owner-defined occasion → sub-occasion map for the tagging UI.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/settings");
+        if (!res.ok) return;
+        const d = await res.json();
+        if (Array.isArray(d?.program?.occasions)) setOccasions(d.program.occasions);
+      } catch {
+        /* non-fatal — occasion tagging just won't show */
       }
     })();
   }, []);
 
   const selectedConsignor =
     consignors.find((c) => c.id === consignorId) ?? null;
+
+  // Matching set: current members (editing), the chosen partner, and search hits.
+  const currentSetMembers = allItems.filter(
+    (i) => !!item?.set_group && i.set_group === item.set_group && i.id !== item.id
+  );
+  const setPartner = allItems.find((i) => i.id === setPartnerId) ?? null;
+  const setMatches = (() => {
+    const q = setQuery.trim().toLowerCase();
+    const base = allItems.filter(
+      (i) => i.id !== item?.id && i.status !== "retired"
+    );
+    const hits = q
+      ? base.filter(
+          (i) =>
+            (i.name || i.brand).toLowerCase().includes(q) ||
+            (i.barcode || "").toLowerCase().includes(q)
+        )
+      : base;
+    return hits.slice(0, 8);
+  })();
+
+  // Signed if the loaded record shows it, or they signed in this session.
+  const consignorSigned =
+    !!selectedConsignor?.agreement_signed_at ||
+    (consignorId !== "" && signedIds.has(Number(consignorId)));
 
   const consignorMatches = (() => {
     const q = consignorQuery.trim().toLowerCase();
@@ -201,16 +275,6 @@ export default function ItemForm({
       )
       .slice(0, 8);
   })();
-
-  function pickTier(t: Tier) {
-    const prevDefault = TIERS.find((x) => x.value === tier)?.price;
-    setTier(t);
-    const next = TIERS.find((x) => x.value === t)!.price;
-    // keep a custom price the owner typed; follow the tier otherwise
-    if (rentalPrice === "" || Number(rentalPrice) === prevDefault) {
-      setRentalPrice(String(next));
-    }
-  }
 
   // Newly-selected files wait here so each can be cropped before upload.
   function handlePhotos(files: FileList) {
@@ -297,7 +361,8 @@ export default function ItemForm({
       color: colors.join(", "),
       fabric: fabric.trim(),
       fit_notes: fitNotes.trim(),
-      silhouette: silhouette || null,
+      silhouette: silhouettes.length ? silhouettes.join(", ") : null,
+      style_tags: styleTags,
       new_with_tags: newWithTags,
       tier,
       rental_price: Number(rentalPrice),
@@ -305,14 +370,17 @@ export default function ItemForm({
       retail_value: retailValue === "" ? null : Number(retailValue),
       replacement_value: replacementValue === "" ? null : Number(replacementValue),
       replacement_value_manual: replacementManual,
+      set_partner_id: setPartnerId || null,
+      set_unlink: setUnlink,
       acquisition_date: acquisitionDate || null,
       source: source.trim(),
-      ambassador_id: ambassadorId === "" ? null : ambassadorId,
       initial_clean: !editing && ownership === "consignment" && initialClean,
       condition_notes: conditionNotes.trim(),
       ownership,
       consignor_id: consignorId === "" ? null : consignorId,
       event_types: eventTypes,
+      occasion_tags: occasionTags,
+      sub_occasion_tags: subOccasionTags,
       status,
       location: location.trim(),
       photo_url: photos[0] ?? null,
@@ -335,6 +403,29 @@ export default function ItemForm({
     }
   }
 
+  // Staff resolution of consignor approval (after an in-person dispute review).
+  async function resolveApproval(
+    action: "approve" | "accept_suggested" | "reject_suggested"
+  ) {
+    if (!editing) return;
+    setSaving(true);
+    setError("");
+    const res = await fetch(`/api/items/${item!.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "approval", approval_action: action }),
+    });
+    if (res.ok) {
+      const saved: Item = await res.json();
+      saved.consignor_name = item!.consignor_name ?? null;
+      onSaved(saved);
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setError(d.error || "Couldn't update approval.");
+      setSaving(false);
+    }
+  }
+
   async function remove() {
     setSaving(true);
     const res = await fetch(`/api/items/${item!.id}`, { method: "DELETE" });
@@ -350,6 +441,27 @@ export default function ItemForm({
     setEventTypes((prev) =>
       prev.includes(ev) ? prev.filter((x) => x !== ev) : [...prev, ev]
     );
+  }
+
+  // Toggle a top-level occasion. Un-selecting also drops all of its sub tags.
+  function toggleOccasion(name: string) {
+    setOccasionTags((prev) => {
+      if (prev.includes(name)) {
+        setSubOccasionTags((subs) => subs.filter((s) => !s.startsWith(`${name}:`)));
+        return prev.filter((x) => x !== name);
+      }
+      return [...prev, name];
+    });
+  }
+
+  // Toggle a sub-occasion ("Occasion:Sub"). Selecting a sub implies its occasion.
+  function toggleSub(occasion: string, sub: string) {
+    const tag = `${occasion}:${sub}`;
+    setSubOccasionTags((prev) => {
+      if (prev.includes(tag)) return prev.filter((x) => x !== tag);
+      setOccasionTags((occ) => (occ.includes(occasion) ? occ : [...occ, occasion]));
+      return [...prev, tag];
+    });
   }
 
   return (
@@ -561,51 +673,187 @@ export default function ItemForm({
                 )}
               </div>
               <div>
-                <label className={labelCls}>Silhouette</label>
+                <label className={labelCls}>Silhouette(s)</label>
                 <select
                   className={inputCls}
-                  value={silhouette}
-                  onChange={(e) => setSilhouette(e.target.value)}
+                  value=""
+                  onChange={(e) => {
+                    const s = e.target.value;
+                    if (s && !silhouettes.includes(s)) {
+                      setSilhouettes((prev) => [...prev, s]);
+                    }
+                  }}
                 >
-                  <option value="">Select</option>
-                  {SILHOUETTES.map((s) => (
+                  <option value="">Add a silhouette…</option>
+                  {SILHOUETTES.filter((s) => !silhouettes.includes(s)).map((s) => (
                     <option key={s} value={s}>
                       {s}
                     </option>
                   ))}
                 </select>
+                {silhouettes.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {silhouettes.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() =>
+                          setSilhouettes((prev) => prev.filter((x) => x !== s))
+                        }
+                        className="flex items-center gap-1 rounded-full bg-lavender/50 px-2.5 py-1 text-[12px]"
+                      >
+                        {s} <span className="text-ink/40">×</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className={labelCls}>Style tags</label>
+                <p className="-mt-0.5 mb-1.5 text-[12px] text-ink/45">
+                  Descriptive words shoppers might search — e.g. sparkly, sequin,
+                  backless, flowy. Type and press Enter.
+                </p>
+                <input
+                  className={inputCls}
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      addTag(tagInput);
+                    } else if (e.key === "Backspace" && !tagInput && styleTags.length) {
+                      setStyleTags((prev) => prev.slice(0, -1));
+                    }
+                  }}
+                  placeholder="Add a tag…"
+                />
+                {tagSuggestions.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {tagSuggestions.map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => addTag(t)}
+                        className="rounded-full border border-ink/15 bg-white px-2.5 py-1 text-[12px] text-ink/60 hover:border-ink/35"
+                      >
+                        + {t}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {styleTags.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {styleTags.map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() =>
+                          setStyleTags((prev) => prev.filter((x) => x !== t))
+                        }
+                        className="flex items-center gap-1 rounded-full bg-sage/40 px-2.5 py-1 text-[12px]"
+                      >
+                        {t} <span className="text-ink/40">×</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
             <div>
-              <label className={labelCls}>Description</label>
-              <textarea
-                className={`${inputCls} min-h-16 resize-y`}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Strappy silk slip with cowl neck."
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={labelCls}>Fabric</label>
-                <input
-                  className={inputCls}
-                  value={fabric}
-                  onChange={(e) => setFabric(e.target.value)}
-                  placeholder="100% silk"
-                />
-              </div>
-              <div>
-                <label className={labelCls}>Fit notes</label>
-                <input
-                  className={inputCls}
-                  value={fitNotes}
-                  onChange={(e) => setFitNotes(e.target.value)}
-                  placeholder="Runs small; true XS"
-                />
-              </div>
+              <label className={labelCls}>Matching set</label>
+              {currentSetMembers.length > 0 && !setUnlink && (
+                <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                  {currentSetMembers.map((m) => (
+                    <span
+                      key={m.id}
+                      className="rounded-full bg-lavender/50 px-2.5 py-1 text-[12px]"
+                    >
+                      {m.name || m.brand}
+                    </span>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setSetUnlink(true)}
+                    className="text-[12px] text-ink/50 underline underline-offset-2"
+                  >
+                    Unlink this piece
+                  </button>
+                </div>
+              )}
+              {setUnlink && (
+                <p className="mb-2 text-[12px] text-blush-deep">
+                  This piece will be removed from its set on save.{" "}
+                  <button
+                    type="button"
+                    onClick={() => setSetUnlink(false)}
+                    className="underline underline-offset-2"
+                  >
+                    undo
+                  </button>
+                </p>
+              )}
+              {setPartner ? (
+                <div className="flex items-center justify-between rounded-xl border border-ink/15 bg-white px-3.5 py-2.5">
+                  <span className="truncate text-[15px]">
+                    Pairs with: {setPartner.name || setPartner.brand}
+                    <span className="text-ink/45"> · {setPartner.barcode}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSetPartnerId("");
+                      setSetQuery("");
+                    }}
+                    className="ml-2 shrink-0 rounded-full px-2 text-lg leading-none text-ink/40 hover:bg-ink/5"
+                    aria-label="Clear matching piece"
+                  >
+                    ×
+                  </button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <input
+                    className={inputCls}
+                    placeholder="Search a piece it pairs with…"
+                    value={setQuery}
+                    onChange={(e) => {
+                      setSetQuery(e.target.value);
+                      setSetListOpen(true);
+                    }}
+                    onFocus={() => setSetListOpen(true)}
+                    onBlur={() => setTimeout(() => setSetListOpen(false), 150)}
+                  />
+                  {setListOpen && setMatches.length > 0 && (
+                    <div className="absolute z-10 mt-1.5 max-h-56 w-full overflow-y-auto rounded-xl border border-ink/10 bg-white shadow-lg">
+                      {setMatches.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            setSetPartnerId(m.id);
+                            setSetUnlink(false);
+                            setSetListOpen(false);
+                          }}
+                          className="block w-full px-3.5 py-2.5 text-left text-[15px] hover:bg-cream"
+                        >
+                          {m.name || m.brand}
+                          <span className="text-ink/45">
+                            {" "}
+                            · {m.barcode} · {m.size}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <p className="mt-1 text-[12px] text-ink/45">
+                Link a top and skirt (or any pieces) so they cross-link as a
+                matching set online.
+              </p>
             </div>
 
             <button
@@ -638,26 +886,6 @@ export default function ItemForm({
               </span>
             </button>
 
-            <div>
-              <label className={labelCls}>Tier</label>
-              <div className="flex flex-wrap gap-2">
-                {TIERS.map((t) => (
-                  <button
-                    key={t.value}
-                    type="button"
-                    onClick={() => pickTier(t.value)}
-                    className={`flex-1 whitespace-nowrap rounded-full border px-3 py-2 text-sm transition-colors ${
-                      tier === t.value
-                        ? "border-ink bg-ink text-cream"
-                        : "border-ink/15 bg-white text-ink/70"
-                    }`}
-                  >
-                    {t.label} ${t.price}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className={labelCls}>Rental price ($) *</label>
@@ -687,11 +915,56 @@ export default function ItemForm({
                   inputMode="decimal"
                   className={inputCls}
                   value={retailValue}
-                  onChange={(e) => setRetailValue(e.target.value)}
+                  onChange={(e) => {
+                    setRetailValue(e.target.value);
+                    setPriceSuggestionDismissed(false); // re-offer for the new value
+                  }}
                   placeholder="—"
                 />
               </div>
             </div>
+
+            {/* Retail-based price suggestion — never auto-applied; only fills the
+                rental price when explicitly accepted. */}
+            {(() => {
+              const suggested = suggestedRentalPrice(
+                retailValue === "" ? null : Number(retailValue)
+              );
+              if (
+                suggested == null ||
+                priceSuggestionDismissed ||
+                Number(rentalPrice) === suggested
+              ) {
+                return null;
+              }
+              return (
+                <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-sage/60 bg-sage/15 px-4 py-3 text-sm">
+                  <span className="text-ink/70">
+                    Suggested rental price{" "}
+                    <span className="font-semibold text-ink">${suggested}</span>{" "}
+                    <span className="text-ink/45">(retail ÷ 4)</span>
+                  </span>
+                  <span className="flex-1" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRentalPrice(String(suggested));
+                      setPriceSuggestionDismissed(true);
+                    }}
+                    className="rounded-full bg-ink px-3.5 py-1.5 text-cream"
+                  >
+                    {item ? "Accept suggestion" : "Accept"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPriceSuggestionDismissed(true)}
+                    className="rounded-full border border-ink/20 px-3.5 py-1.5 text-ink/60"
+                  >
+                    {item ? "Keep current price" : "Enter manually"}
+                  </button>
+                </div>
+              );
+            })()}
 
             <div>
               <label className={labelCls}>
@@ -749,24 +1022,6 @@ export default function ItemForm({
                   placeholder="Boutique, donor, sample sale…"
                 />
               </div>
-            </div>
-
-            <div>
-              <label className={labelCls}>Sourced by (ambassador)</label>
-              <select
-                className={inputCls}
-                value={ambassadorId}
-                onChange={(e) =>
-                  setAmbassadorId(e.target.value ? Number(e.target.value) : "")
-                }
-              >
-                <option value="">— None —</option>
-                {ambassadors.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
             </div>
 
             <div>
@@ -932,6 +1187,109 @@ export default function ItemForm({
                     </div>
                   </div>
                 )}
+                {selectedConsignor && (
+                  <div className="mt-3 space-y-2">
+                    {/* Signed-agreement status (required before the piece goes live) */}
+                    {consignorSigned ? (
+                      <p className="rounded-xl bg-sage/40 px-3.5 py-2.5 text-[13px] text-ink/70">
+                        Consignor Agreement signed.
+                      </p>
+                    ) : (
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-butter/60 px-3.5 py-2.5">
+                        <p className="text-[13px] text-ink/70">
+                          Not signed yet. Required before this piece can go live.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setAgreementOpen(true)}
+                          className="shrink-0 rounded-full bg-ink px-4 py-1.5 text-sm text-cream"
+                        >
+                          Sign agreement
+                        </button>
+                      </div>
+                    )}
+                    {/* Consignor approval of the replacement value */}
+                    {!editing ? (
+                      <p className="rounded-xl bg-butter/60 px-3.5 py-2.5 text-[13px] text-ink/70">
+                        After you save, this piece is sent to the consignor to
+                        approve its replacement value
+                        {replacementValue !== "" ? ` of $${replacementValue}` : ""}.
+                        It won&apos;t go live until they approve it in their hub.
+                      </p>
+                    ) : item?.approval_status === "approved" ? (
+                      <p className="rounded-xl bg-sage/40 px-3.5 py-2.5 text-[13px] text-ink/70">
+                        Consignor approved the replacement value
+                        {item?.approved_at
+                          ? ` on ${new Date(item.approved_at).toLocaleDateString()}`
+                          : ""}
+                        .
+                      </p>
+                    ) : item?.approval_status === "disputed" ? (
+                      <div className="rounded-xl bg-blush/40 px-3.5 py-2.5 text-[13px] text-ink/80">
+                        <p className="font-medium">
+                          Disputed — consignor suggests $
+                          {Number(item?.disputed_value ?? 0)}
+                        </p>
+                        <p className="mt-1">
+                          Your value ${Number(item?.replacement_value ?? 0)} ·
+                          their suggestion ${Number(item?.disputed_value ?? 0)}
+                        </p>
+                        {item?.dispute_note && (
+                          <p className="mt-1 italic">“{item.dispute_note}”</p>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        <p className="rounded-xl bg-butter/60 px-3.5 py-2.5 text-[13px] text-ink/70">
+                          Pending consignor approval. Keep refining the value if
+                          you like; it won&apos;t go live until the consignor
+                          approves it.
+                        </p>
+                        {item?.dispute_outcome === "accepted" && (
+                          <p className="text-[12px] text-ink/45">
+                            You accepted their suggested value; awaiting their
+                            final sign-off.
+                          </p>
+                        )}
+                        {item?.dispute_outcome === "rejected" && (
+                          <p className="text-[12px] text-ink/45">
+                            You kept your value; awaiting their sign-off.
+                          </p>
+                        )}
+                      </>
+                    )}
+                    {editing && item?.approval_status === "disputed" && (
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => resolveApproval("accept_suggested")}
+                          disabled={saving}
+                          className="rounded-full bg-ink px-4 py-1.5 text-sm text-cream disabled:opacity-40"
+                        >
+                          Approve their ${Number(item?.disputed_value ?? 0)} value
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => resolveApproval("reject_suggested")}
+                          disabled={saving}
+                          className="rounded-full border border-ink/15 px-4 py-1.5 text-sm text-ink/60 disabled:opacity-40"
+                        >
+                          Reject, keep ${Number(item?.replacement_value ?? 0)}
+                        </button>
+                      </div>
+                    )}
+                    {editing && item?.approval_status === "pending" && (
+                      <button
+                        type="button"
+                        onClick={() => resolveApproval("approve")}
+                        disabled={saving}
+                        className="rounded-full bg-ink px-4 py-1.5 text-sm text-cream disabled:opacity-40"
+                      >
+                        Approve (in person)
+                      </button>
+                    )}
+                  </div>
+                )}
                 {!editing && (
                   <label className="mt-3 flex items-start gap-2 text-[13px] text-ink/70">
                     <input
@@ -968,6 +1326,57 @@ export default function ItemForm({
                 ))}
               </div>
             </div>
+
+            {occasions.length > 0 && (
+              <div>
+                <label className={labelCls}>Occasions</label>
+                <p className="-mt-0.5 mb-1.5 text-[12px] text-ink/45">
+                  Powers the shop&apos;s &ldquo;Shop by Occasion&rdquo; pills. Pick a
+                  sub-option and its occasion is added too. Edit the list in Settings.
+                </p>
+                <div className="space-y-2.5">
+                  {occasions.map((o) => {
+                    const on = occasionTags.includes(o.name);
+                    return (
+                      <div key={o.name} className="rounded-2xl border border-ink/10 bg-white p-2.5">
+                        <button
+                          type="button"
+                          onClick={() => toggleOccasion(o.name)}
+                          className={`rounded-full border px-3 py-1.5 text-sm ${
+                            on
+                              ? "border-ink bg-ink text-cream"
+                              : "border-ink/15 bg-white text-ink/60"
+                          }`}
+                        >
+                          {o.name}
+                        </button>
+                        {o.subs.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {o.subs.map((s) => {
+                              const subOn = subOccasionTags.includes(`${o.name}:${s}`);
+                              return (
+                                <button
+                                  key={s}
+                                  type="button"
+                                  onClick={() => toggleSub(o.name, s)}
+                                  className={`rounded-full border px-3 py-1 text-[13px] ${
+                                    subOn
+                                      ? "border-blush-deep bg-blush text-ink"
+                                      : "border-ink/15 bg-white text-ink/50"
+                                  }`}
+                                >
+                                  {s}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               {editing && (
@@ -1049,6 +1458,17 @@ export default function ItemForm({
         </div>
       </div>
     </div>
+    {agreementOpen && consignorId !== "" && (
+      <ConsignorAgreementModal
+        consignorId={Number(consignorId)}
+        consignorName={selectedConsignor?.name ?? ""}
+        onClose={() => setAgreementOpen(false)}
+        onSigned={(updated) => {
+          setSignedIds((prev) => new Set(prev).add(updated.id));
+          setAgreementOpen(false);
+        }}
+      />
+    )}
     {scanOpen && (
       <CameraScanner
         onResult={(text) => {

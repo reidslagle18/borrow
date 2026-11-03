@@ -15,11 +15,13 @@ import { beep } from "@/lib/scanSound";
 import {
   Item,
   Customer,
-  CLEANING_FEE_DEFAULT,
   salesTax,
   RENTAL_DAYS,
   AGREEMENT_TERMS,
-  tierLabel,
+  extraRentalDays,
+  EXTRA_DAY_RATE,
+  nextOpenDate,
+  isClosedDay,
 } from "@/lib/types";
 import { todayISO, addDays, fmtShort } from "@/lib/dates";
 
@@ -55,6 +57,26 @@ export default function CheckoutPage() {
   );
 }
 
+/**
+ * The part of an item's condition notes worth flagging to a renter at checkout —
+ * real flaws the owner recorded (stains, tears, marks) — with pure system
+ * lifecycle log lines stripped out so routine history doesn't trigger a prompt.
+ * Returns null when there's nothing disclosable.
+ */
+function disclosableCondition(item: Item): string | null {
+  const notes = (item.condition_notes || "").trim();
+  if (!notes) return null;
+  const SYSTEM =
+    /pickup notice sent|out to consignor|returned to consignor|back on rack|initial clean|moved to storage|in storage|total loss|storage window|dry clean at retrieval/i;
+  const kept = notes
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .filter((l) => !SYSTEM.test(l));
+  const text = kept.join("\n").trim();
+  return text || null;
+}
+
 function CheckoutInner() {
   const stripe = useStripe();
   const elements = useElements();
@@ -68,6 +90,10 @@ function CheckoutInner() {
   const [scanInput, setScanInput] = useState("");
   const [scanOpen, setScanOpen] = useState(false);
   const [scanMsg, setScanMsg] = useState("");
+  // Condition disclosure: a piece with noted flaws waits for the owner to show
+  // the customer and confirm before it's added. `acked` remembers confirmations.
+  const [disclosePiece, setDisclosePiece] = useState<Item | null>(null);
+  const [ackedDisclosures, setAckedDisclosures] = useState<Set<string>>(new Set());
 
   // customer
   const [customerId, setCustomerId] = useState<number | "">("");
@@ -82,16 +108,26 @@ function CheckoutInner() {
   const [startDate, setStartDate] = useState(todayISO());
   const [dueDate, setDueDate] = useState(addDays(todayISO(), RENTAL_DAYS));
   const [dueTouched, setDueTouched] = useState(false);
+  // Same-day safeguard: a pickup left at today is almost always a reservation
+  // whose future date wasn't set — require an explicit "yes, today" first.
+  const [sameDayConfirmed, setSameDayConfirmed] = useState(false);
+  const [showSameDayConfirm, setShowSameDayConfirm] = useState(false);
+  const startDateRef = useRef<HTMLInputElement>(null);
   const [receiptEmail, setReceiptEmail] = useState("");
-  const [referralCode, setReferralCode] = useState("");
   const [accepted, setAccepted] = useState(false);
+  const [chargeAuth, setChargeAuth] = useState(false);
   const [agreementName, setAgreementName] = useState("");
+  const [campaignCode, setCampaignCode] = useState(""); // optional give-back tag
 
-  const [ambCustomerIds, setAmbCustomerIds] = useState<Set<number>>(new Set());
-  const [cleaningFee, setCleaningFee] = useState<number>(CLEANING_FEE_DEFAULT);
   const [hangerFee, setHangerFee] = useState(0);
-  const [bagFee, setBagFee] = useState(0);
+  const [closedDates, setClosedDates] = useState<string[]>([]);
+  const [closedWeekdays, setClosedWeekdays] = useState<number[]>([]);
   const [taxRate, setTaxRate] = useState(0);
+  // How many days before a reservation's pickup a piece stops taking new rentals.
+  const [protectDays, setProtectDays] = useState(14);
+  // Cleaning/turnaround buffer — a rental must be back and cleaned this many days
+  // before an upcoming reservation's pickup.
+  const [turnaroundDays, setTurnaroundDays] = useState(4);
   // Terminal readers are looked up live from Stripe (never a stored id, which
   // could be from the wrong mode). null = still loading.
   const [readers, setReaders] = useState<TerminalReader[] | null>(null);
@@ -111,20 +147,18 @@ function CheckoutInner() {
   const [done, setDone] = useState<{
     id: number;
     emailSent: boolean;
-    ambassadorApplied: boolean;
-    blackout: boolean;
-    referredBy: string | null;
     creditApplied: number;
+    creditRemaining: number;
     paymentPending: boolean;
+    reserving: boolean;
   } | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const [ir, cr, ar, sr, rd] = await Promise.all([
+        const [ir, cr, sr, rd] = await Promise.all([
           fetch("/api/items"),
           fetch("/api/customers"),
-          fetch("/api/ambassadors"),
           fetch("/api/settings"),
           fetch("/api/stripe/terminal/readers"),
         ]);
@@ -134,9 +168,11 @@ function CheckoutInner() {
         let settingsPref = "";
         if (sr.ok) {
           const s = await sr.json();
-          if (s.program?.cleaning_fee != null) setCleaningFee(s.program.cleaning_fee);
           if (s.program?.hanger_fee != null) setHangerFee(Number(s.program.hanger_fee));
-          if (s.program?.garment_bag_fee != null) setBagFee(Number(s.program.garment_bag_fee));
+          if (Array.isArray(s.program?.store_closed_dates)) setClosedDates(s.program.store_closed_dates.map(String));
+          if (Array.isArray(s.program?.store_closed_weekdays)) setClosedWeekdays(s.program.store_closed_weekdays.map(Number));
+          if (s.program?.reservation_protect_days != null) setProtectDays(Number(s.program.reservation_protect_days));
+          if (s.program?.turnaround_days != null) setTurnaroundDays(Number(s.program.turnaround_days));
           if (s.program?.sales_tax_rate != null) setTaxRate(Number(s.program.sales_tax_rate));
           if (s.program?.terminal_reader_id) settingsPref = s.program.terminal_reader_id;
         }
@@ -163,23 +199,12 @@ function CheckoutInner() {
           // Stripe not configured / lookup failed → no in-person tap available.
           setReaders([]);
         }
-        if (ar.ok) {
-          const amb = await ar.json();
-          setAmbCustomerIds(
-            new Set(
-              amb
-                .map((a: { customer_id: number | null }) => a.customer_id)
-                .filter((v: number | null): v is number => v != null)
-            )
-          );
-        }
       } catch {
         setLoadError("Couldn't load inventory — refresh to try again.");
       }
     })();
   }, []);
 
-  const isAmbassador = customerId !== "" && ambCustomerIds.has(customerId);
   // In-person tap is the payment method whenever this account has at least one
   // live Terminal reader; then we skip the manual card-on-file step.
   const useTerminal = (readers?.length ?? 0) > 0;
@@ -193,6 +218,20 @@ function CheckoutInner() {
       /* private mode — fine, it just won't be remembered */
     }
   }
+
+  // Reservation safety net: while a just-created reservation is still on the
+  // success screen, warn if staff try to close/refresh the tab. It's a nudge
+  // that this order isn't fully done — its pickup still has to be confirmed on
+  // pickup day, or the piece gets stuck (reserved, un-checkinable).
+  useEffect(() => {
+    if (!done?.reserving) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [done?.reserving]);
 
   const byId = useMemo(() => {
     const m = new Map<string, Item>();
@@ -236,20 +275,82 @@ function CheckoutInner() {
   }, [customers, customerQuery]);
 
   const subtotal = selected.reduce((s, i) => s + Number(i.rental_price), 0);
-  const waiverTotal = selected.length * cleaningFee;
-  const taxTotal = salesTax(subtotal, taxRate); // rental only, not cleaning fee
-  const total = subtotal + waiverTotal + taxTotal;
+  // The Cleaning & Care Fee is already included in each rental price — nothing
+  // extra is added at checkout.
+  const taxTotal = salesTax(subtotal, taxRate);
+  // Extended rental: days booked beyond the standard week cost $EXTRA_DAY_RATE
+  // per item per day (kept by Borrow, like a late fee).
+  const extraDays = extraRentalDays(startDate, dueDate);
+  const extraFeeTotal = extraDays * EXTRA_DAY_RATE * selected.length;
+  const total = subtotal + extraFeeTotal + taxTotal;
+  // Store credit the selected customer has — previewed here, applied server-side.
+  const creditAvailable = Number(selectedCustomer?.store_credit ?? 0);
+  const creditWillApply = Math.min(creditAvailable, total);
+  const totalAfterCredit = Math.round((total - creditWillApply) * 100) / 100;
+  const creditLeftAfter = Math.round((creditAvailable - creditWillApply) * 100) / 100;
+  // A closed PICKUP day blocks checkout (nobody's there to hand it over). A
+  // closed RETURN day is fine — it rolls to the next open day (bring it back
+  // then) at no penalty; the server stores that rolled due date.
+  const closedPickup = isClosedDay(startDate, closedDates, closedWeekdays) ? startDate : null;
+  const effectiveDue = nextOpenDate(dueDate, closedDates, closedWeekdays);
+  const returnRolled = effectiveDue !== dueDate;
+  // A future pickup date makes this a reservation (paid in full, piece held).
+  const reserving = startDate > todayISO();
+
+  // Last Safe Rental Date for a piece with an upcoming reservation (else null).
+  // A piece with an upcoming reservation can still be rented out — as long as
+  // THIS rental is returned AND cleaned (turnaround) before that reservation's
+  // pickup. Blocks only when the actual dates would run into the reservation,
+  // not a blanket days-out cutoff. (The server re-checks the full calendar.)
+  function reservationBlocks(item: Item): boolean {
+    if (!item.next_reservation_date) return false;
+    return addDays(dueDate, turnaroundDays) >= item.next_reservation_date;
+  }
 
   function addPiece(item: Item): { ok: boolean; msg: string } {
     if (selectedIds.includes(item.id)) {
       return { ok: false, msg: `${item.brand} is already in this checkout.` };
     }
+    if (item.status === "rented") {
+      return { ok: false, msg: `${item.brand} is Rented Out — can't check it out.` };
+    }
+    if (item.status === "consignor_hold") {
+      return { ok: false, msg: `${item.brand} is on hold for its consignor — can't check it out.` };
+    }
     if (item.status !== "available" && item.status !== "reserved") {
       return { ok: false, msg: `${item.brand} isn't available (${item.status}).` };
+    }
+    // Reserved piece: allow unless this rental's return + cleaning would run into
+    // the upcoming reservation.
+    if (reservationBlocks(item)) {
+      return {
+        ok: false,
+        msg: `${item.brand} is reserved for ${fmtShort(item.next_reservation_date!)} — this rental's return (${fmtShort(dueDate)}) doesn't leave ${turnaroundDays} day${turnaroundDays === 1 ? "" : "s"} to clean it before then. Set the return date earlier to rent it out.`,
+      };
+    }
+    // Has a noted flaw (stains, tears, etc.)? Pause and make the owner show the
+    // customer + confirm before adding. Skipped once acknowledged this session.
+    if (disclosableCondition(item) && !ackedDisclosures.has(item.id)) {
+      setDisclosePiece(item);
+      return { ok: true, msg: "" };
     }
     setSelectedIds((prev) => [...prev, item.id]);
     return { ok: true, msg: "" };
   }
+
+  // Live conflict check: a piece already added can become unavailable when the
+  // start date is moved onto/over an existing booking. Recomputed on every date
+  // change so staff see it immediately, not at the very end of checkout.
+  const conflictPieces = useMemo(
+    () =>
+      selected.filter((item) => {
+        if (item.status === "rented") return true;
+        return reservationBlocks(item);
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selected, dueDate, turnaroundDays]
+  );
+  const conflictIds = new Set(conflictPieces.map((i) => i.id));
 
   function handleScan(raw: string) {
     const code = raw.trim();
@@ -273,6 +374,9 @@ function CheckoutInner() {
   function pickStart(d: string) {
     setStartDate(d);
     if (!dueTouched && d) setDueDate(addDays(d, RENTAL_DAYS));
+    // Any date change re-arms the same-day safeguard.
+    setSameDayConfirmed(false);
+    setShowSameDayConfirm(false);
   }
 
   async function addCustomer() {
@@ -307,14 +411,12 @@ function CheckoutInner() {
   }
 
   // Holds the created order between "check out" and a successful tap, so the
-  // done screen can report ambassador/credit/referral details after payment.
+  // done screen can report credit details after payment.
   const pendingOrder = useRef<{
     transaction: { id: number };
     email_sent: boolean;
-    ambassador_applied: boolean;
-    blackout: boolean;
-    referred_by: string | null;
     credit_applied: number;
+    credit_remaining?: number;
   } | null>(null);
 
   // Tell the reader to stop prompting (clears a stuck "please tap" screen).
@@ -354,11 +456,10 @@ function CheckoutInner() {
     setDone({
       id: data.transaction.id,
       emailSent: data.email_sent,
-      ambassadorApplied: !!data.ambassador_applied,
-      blackout: !!data.blackout,
-      referredBy: data.referred_by ?? null,
       creditApplied: Number(data.credit_applied) || 0,
+      creditRemaining: Number(data.credit_remaining) || 0,
       paymentPending,
+      reserving,
     });
   }
 
@@ -445,7 +546,7 @@ function CheckoutInner() {
     });
   }
 
-  async function checkout() {
+  async function checkout(sameDayOk = false) {
     if (selected.length === 0) {
       setError("Add at least one piece.");
       return;
@@ -458,16 +559,38 @@ function CheckoutInner() {
       setError("Enter the name of the person accepting the agreement.");
       return;
     }
-    // When card-on-file is in use (Stripe on, no tap reader), a customer + saved
-    // card are required (the agreement authorizes off-session late-fee /
-    // replacement charges to this card).
-    if (stripeEnabled && !useTerminal && customerId === "") {
-      setError("Add a customer so their card can be saved on file.");
+    if (!chargeAuth) {
+      setError("Confirm the automatic-charge authorization before checking out.");
+      return;
+    }
+    if (closedPickup) {
+      setError(`The studio is closed ${fmtShort(closedPickup)}, so the pickup can't be that day. Pick a different start date.`);
+      return;
+    }
+    if (conflictPieces.length > 0) {
+      setError(
+        `${conflictPieces.map((p) => p.brand).join(", ")} ${conflictPieces.length === 1 ? "is" : "are"} already booked over ${fmtShort(startDate)} — pick a different piece or dates.`
+      );
+      return;
+    }
+    // Any card checkout (tap OR manual) must be tied to a customer so the card
+    // is saved on file — the agreement authorizes off-session late-fee / damage /
+    // replacement charges to it. Cash / Stripe-off checkouts are exempt.
+    if (stripeEnabled && customerId === "") {
+      setError("Add a customer so their card is saved on file for damage or late fees.");
       return;
     }
     // Several readers registered but none chosen yet.
     if (needsReaderChoice) {
       setError("Choose which reader to charge before checking out.");
+      return;
+    }
+    // Same-day safeguard: if the pickup date is today (not a future
+    // reservation) and hasn't been explicitly confirmed, stop and ask — this is
+    // what prevents a future reservation from being saved as today by mistake.
+    if (!reserving && !sameDayConfirmed && !sameDayOk) {
+      setError("");
+      setShowSameDayConfirm(true);
       return;
     }
     setSubmitting(true);
@@ -486,8 +609,9 @@ function CheckoutInner() {
             due_date: dueDate,
             agreement_accepted: accepted,
             agreement_name: agreementName.trim(),
+            charge_auth_accepted: chargeAuth,
             receipt_email: receiptEmail.trim() || null,
-            referral_code: referralCode.trim() || null,
+            campaign_code: campaignCode.trim() || null,
             payment_mode: "terminal",
           }),
         });
@@ -540,36 +664,41 @@ function CheckoutInner() {
       }
     }
 
-    const res = await fetch("/api/checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        customer_id: customerId === "" ? null : customerId,
-        item_ids: selectedIds,
-        start_date: startDate,
-        due_date: dueDate,
-        agreement_accepted: accepted,
-        agreement_name: agreementName.trim(),
-        receipt_email: receiptEmail.trim() || null,
-        referral_code: referralCode.trim() || null,
-        stripe_customer_id: stripeCustomerId,
-        stripe_payment_method_id: stripePaymentMethodId,
-      }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setDone({
-        id: data.transaction.id,
-        emailSent: data.email_sent,
-        ambassadorApplied: !!data.ambassador_applied,
-        blackout: !!data.blackout,
-        referredBy: data.referred_by ?? null,
-        creditApplied: Number(data.credit_applied) || 0,
-        paymentPending: false,
+    try {
+      const res = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_id: customerId === "" ? null : customerId,
+          item_ids: selectedIds,
+          start_date: startDate,
+          due_date: dueDate,
+          agreement_accepted: accepted,
+          agreement_name: agreementName.trim(),
+          charge_auth_accepted: chargeAuth,
+          receipt_email: receiptEmail.trim() || null,
+          campaign_code: campaignCode.trim() || null,
+          stripe_customer_id: stripeCustomerId,
+          stripe_payment_method_id: stripePaymentMethodId,
+        }),
       });
-    } else {
-      const data = await res.json().catch(() => ({}));
-      setError(data.error || "Checkout failed — try again.");
+      if (res.ok) {
+        const data = await res.json();
+        setDone({
+          id: data.transaction.id,
+          emailSent: data.email_sent,
+          creditApplied: Number(data.credit_applied) || 0,
+          creditRemaining: Number(data.credit_remaining) || 0,
+          paymentPending: false,
+          reserving,
+        });
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "Checkout failed — try again.");
+        setSubmitting(false);
+      }
+    } catch {
+      setError("Checkout failed — try again.");
       setSubmitting(false);
     }
   }
@@ -579,12 +708,14 @@ function CheckoutInner() {
     setCustomerId("");
     setCustomerQuery("");
     setReceiptEmail("");
-    setReferralCode("");
     setAccepted(false);
+    setChargeAuth(false);
     setAgreementName("");
     setStartDate(todayISO());
     setDueDate(addDays(todayISO(), RENTAL_DAYS));
     setDueTouched(false);
+    setSameDayConfirmed(false);
+    setShowSameDayConfirm(false);
     setError("");
     setDone(null);
     setTap(null);
@@ -597,12 +728,42 @@ function CheckoutInner() {
       <AppShell>
         <div className="mx-auto max-w-xl px-5 py-16 text-center md:px-10">
           <p className="font-serif text-5xl italic text-sage-deep">✓</p>
-          <h1 className="mt-3 font-serif text-4xl font-medium">Checked out</h1>
+          <h1 className="mt-3 font-serif text-4xl font-medium">
+            {done.reserving ? "Reserved" : "Checked out"}
+          </h1>
           <p className="mt-2 text-ink/60">
             Order #{done.id} · {selected.length} piece
-            {selected.length === 1 ? "" : "s"} now marked Rented Out · total{" "}
-            {money(total)}.
+            {selected.length === 1 ? "" : "s"}{" "}
+            {done.reserving
+              ? `held as a reservation for ${fmtShort(startDate)}`
+              : "now marked Rented Out"}{" "}
+            · total {money(total)}.
           </p>
+          {done.reserving && (
+            <div className="mt-4 rounded-2xl border-2 border-butter-deep/60 bg-butter/40 px-4 py-3.5 text-left">
+              <p className="text-[15px] font-bold text-ink">
+                Not fully done yet — this reservation still needs pickup
+                confirmed.
+              </p>
+              <p className="mt-1 text-sm text-ink/75">
+                Paid in full and held (shown as Reserved) for{" "}
+                {fmtShort(startDate)}. When {selectedCustomer?.name || "the customer"}{" "}
+                comes in, open the calendar and tap <strong>Picked up</strong> —
+                otherwise the piece stays stuck as Reserved and can&apos;t be
+                checked back in.
+              </p>
+              <Link
+                href="/calendar"
+                className="mt-3 inline-block rounded-full bg-ink px-5 py-2.5 text-[14px] text-cream"
+              >
+                Go to calendar to confirm pickup →
+              </Link>
+              <p className="mt-3 text-[13px] text-ink/60">
+                Canceling 48+ hours before {fmtShort(startDate)} refunds the
+                rental price; within 48 hours it&apos;s non-refundable.
+              </p>
+            </div>
+          )}
           {done.paymentPending && (
             <p className="mt-2 rounded-xl bg-butter/40 px-4 py-2 text-sm text-ink/70">
               Payment not collected on the reader — order #{done.id} is marked
@@ -614,24 +775,13 @@ function CheckoutInner() {
               ? "Receipt emailed to the customer."
               : "Receipt email not sent (email isn't configured yet)."}
           </p>
-          {done.ambassadorApplied && (
-            <p className="mt-1 text-sm text-sage-deep">
-              Ambassador credits applied automatically.
-            </p>
-          )}
-          {done.blackout && (
-            <p className="mt-1 text-sm text-blush-deep">
-              Blackout date — full price charged (ambassador perks suppressed).
-            </p>
-          )}
-          {done.referredBy && (
-            <p className="mt-1 text-sm text-ink/50">
-              Referral credited to {done.referredBy}.
-            </p>
-          )}
           {done.creditApplied > 0 && (
             <p className="mt-1 text-sm text-sage-deep">
-              {money(done.creditApplied)} store credit applied.
+              {money(done.creditApplied)} store credit applied
+              {done.creditRemaining > 0
+                ? ` · ${money(done.creditRemaining)} left on their balance`
+                : " · balance now $0"}
+              .
             </p>
           )}
           <div className="mt-8 flex justify-center gap-3">
@@ -737,7 +887,9 @@ function CheckoutInner() {
               selected.map((i) => (
                 <div
                   key={i.id}
-                  className="flex items-center gap-3 rounded-2xl border border-ink/10 bg-white px-3.5 py-2.5"
+                  className={`flex items-center gap-3 rounded-2xl border bg-white px-3.5 py-2.5 ${
+                    conflictIds.has(i.id) ? "border-blush-deep bg-blush/10" : "border-ink/10"
+                  }`}
                 >
                   <div className="h-12 w-9 shrink-0 overflow-hidden rounded-lg bg-lavender/40">
                     {i.photo_url && (
@@ -749,9 +901,13 @@ function CheckoutInner() {
                     <p className="truncate text-[15px] font-medium">{i.name || i.brand}</p>
                     <p className="text-[13px] text-ink/50">
                       <span className="font-mono">{i.barcode || i.id}</span> ·{" "}
-                      {tierLabel(i.tier)} · {money(Number(i.rental_price))} +{" "}
-                      {money(cleaningFee)} cleaning
+                      {money(Number(i.rental_price))} · Cleaning &amp; Care Fee included
                     </p>
+                    {conflictIds.has(i.id) && (
+                      <p className="text-[12px] font-medium text-blush-deep">
+                        ⚠ Rented out over {fmtShort(startDate)} — not available for these dates.
+                      </p>
+                    )}
                     {i.replacement_value != null && Number(i.replacement_value) > 0 && (
                       <p className="text-[12px] text-ink/40">
                         Replacement value {money(Number(i.replacement_value))} if
@@ -883,19 +1039,12 @@ function CheckoutInner() {
           )}
         </section>
 
-        {isAmbassador && (
-          <div className="mt-3 rounded-2xl bg-sage/30 px-4 py-3 text-sm text-ink/70">
-            ✦ This customer is an ambassador — their monthly perk credits apply
-            automatically (free → bonus → $6 → full), unless the start date is a
-            blackout day.
-          </div>
-        )}
-
         {/* Dates */}
         <section className="mt-7 grid grid-cols-2 gap-3">
           <div>
             <label className={labelCls}>Start date</label>
             <input
+              ref={startDateRef}
               type="date"
               className={inputCls}
               value={startDate}
@@ -914,29 +1063,59 @@ function CheckoutInner() {
               }}
             />
           </div>
+          {extraDays > 0 && (
+            <p className="col-span-2 text-[12px] text-ink/55">
+              Extended rental: {extraDays} day{extraDays === 1 ? "" : "s"} past
+              the standard week, charged {money(EXTRA_DAY_RATE)}/day per piece
+              (added to the total below).
+            </p>
+          )}
+          {closedPickup && (
+            <p className="col-span-2 rounded-xl border-2 border-blush-deep/50 bg-blush/20 px-3.5 py-2.5 text-[13px] font-medium text-ink">
+              The studio is closed {fmtShort(closedPickup)}, so the pickup can&apos;t
+              be that day. Pick a different start date to continue.
+            </p>
+          )}
+          {conflictPieces.length > 0 && (
+            <p className="col-span-2 rounded-xl border-2 border-blush-deep/50 bg-blush/20 px-3.5 py-2.5 text-[13px] font-medium text-ink">
+              ⚠ {conflictPieces.map((p) => p.brand).join(", ")}{" "}
+              {conflictPieces.length === 1 ? "is" : "are"} already rented out over{" "}
+              {fmtShort(startDate)}. Remove {conflictPieces.length === 1 ? "it" : "them"} or
+              pick different dates to continue.
+            </p>
+          )}
+          {returnRolled && !closedPickup && (
+            <p className="col-span-2 rounded-xl border border-sage-deep/40 bg-sage/25 px-3.5 py-2.5 text-[13px] text-ink">
+              We&apos;re closed {fmtShort(dueDate)}, so this rents through the next
+              open day. They bring it back {fmtShort(effectiveDue)} — no late fee,
+              no extra charge.
+            </p>
+          )}
         </section>
 
-        {/* Receipt email + referral code */}
-        <section className="mt-7 grid gap-3 sm:grid-cols-2">
-          <div>
-            <label className={labelCls}>Receipt email</label>
-            <input
-              type="email"
-              className={inputCls}
-              placeholder="customer@email.com"
-              value={receiptEmail}
-              onChange={(e) => setReceiptEmail(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className={labelCls}>Referral code (optional)</label>
-            <input
-              className={`${inputCls} font-mono uppercase`}
-              placeholder="Ambassador code"
-              value={referralCode}
-              onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
-            />
-          </div>
+        {/* Receipt email */}
+        <section className="mt-7">
+          <label className={labelCls}>Receipt email</label>
+          <input
+            type="email"
+            className={inputCls}
+            placeholder="customer@email.com"
+            value={receiptEmail}
+            onChange={(e) => setReceiptEmail(e.target.value)}
+          />
+        </section>
+
+        {/* Optional give-back campaign code (tags the order; no discount) */}
+        <section className="mt-7">
+          <label className={labelCls}>Campaign code (optional)</label>
+          <input
+            type="text"
+            className={`${inputCls} uppercase`}
+            placeholder="e.g. FIGHT"
+            value={campaignCode}
+            onChange={(e) => setCampaignCode(e.target.value.toUpperCase())}
+            autoCapitalize="characters"
+          />
         </section>
 
         {/* Card on file (Stripe) — only when there's no tap reader */}
@@ -1044,12 +1223,16 @@ function CheckoutInner() {
             </span>
             <span>{money(subtotal)}</span>
           </div>
-          <div className="mt-1.5 flex justify-between text-sm text-ink/60">
-            <span>
-              Cleaning &amp; Care Fee ({selected.length} × {money(cleaningFee)})
-            </span>
-            <span>{money(waiverTotal)}</span>
-          </div>
+          {extraFeeTotal > 0 && (
+            <div className="mt-1.5 flex justify-between text-sm text-ink/60">
+              <span>
+                Extended rental ({extraDays} extra day{extraDays === 1 ? "" : "s"}
+                {selected.length > 1 ? ` × ${selected.length} pieces` : ""} ×{" "}
+                {money(EXTRA_DAY_RATE)}/day)
+              </span>
+              <span>{money(extraFeeTotal)}</span>
+            </div>
+          )}
           {taxTotal > 0 && (
             <div className="mt-1.5 flex justify-between text-sm text-ink/60">
               <span>Sales tax ({taxRate}%)</span>
@@ -1060,13 +1243,33 @@ function CheckoutInner() {
             <span>Total</span>
             <span>{money(total)}</span>
           </div>
-          {(hangerFee > 0 || bagFee > 0) && (
+          {creditWillApply > 0 && (
+            <>
+              <div className="mt-2 flex justify-between text-sm text-sage-deep">
+                <span>Store credit applied</span>
+                <span>−{money(creditWillApply)}</span>
+              </div>
+              <div className="mt-2 flex justify-between border-t border-ink/10 pt-2 text-lg font-medium">
+                <span>Charge now</span>
+                <span>{money(totalAfterCredit)}</span>
+              </div>
+              <p className="mt-1 text-[12px] text-ink/55">
+                {creditLeftAfter > 0
+                  ? `${money(creditLeftAfter)} store credit will remain on their balance after this order.`
+                  : "This uses the last of their store credit."}
+              </p>
+            </>
+          )}
+          <p className="mt-2.5 rounded-xl bg-sage/25 px-3 py-2 text-[12px] text-ink/70">
+            <span className="font-semibold">Cleaning &amp; Care Fee already
+            included</span> in every price. Remind the customer: please don&apos;t
+            clean the piece themselves — we handle all cleaning.
+          </p>
+          {hangerFee > 0 && (
             <p className="mt-2.5 text-[12px] text-ink/45">
-              If not returned with the piece, the card on file is charged
-              {hangerFee > 0 ? ` ${money(hangerFee)} per hanger` : ""}
-              {hangerFee > 0 && bagFee > 0 ? " and" : ""}
-              {bagFee > 0 ? ` ${money(bagFee)} per garment bag` : ""}. Late returns
-              are {money(15)}/item/day.
+              If the hanger isn&apos;t returned with the piece, the card on file
+              is charged {money(hangerFee)} per hanger. Late returns are{" "}
+              {money(15)}/item/day.
             </p>
           )}
         </section>
@@ -1100,11 +1303,71 @@ function CheckoutInner() {
           )}
         </section>
 
+        {/* Standalone automatic-charge authorization — deliberately separate
+            from the rental-agreement box and placed right at the pay step so
+            it can't be missed. Its own required checkbox. */}
+        <section className="mt-7 rounded-2xl border-2 border-blush-deep/50 bg-blush/20 p-5">
+          <p className="text-[15px] font-bold leading-relaxed text-ink">
+            Your card on file will be automatically charged if this item is
+            returned damaged beyond repair, not returned, or returned late
+            ($15/day). You must bring the hanger back with the piece
+            {hangerFee > 0 && <> or you will be charged {money(hangerFee)}</>}. By
+            checking below, you agree to these charges.
+          </p>
+          <label className="mt-4 flex items-start gap-2.5 text-[15px] font-medium">
+            <input
+              type="checkbox"
+              checked={chargeAuth}
+              onChange={(e) => setChargeAuth(e.target.checked)}
+              className="mt-1 h-5 w-5 accent-blush-deep"
+            />
+            <span>I authorize these automatic charges to the card on file.</span>
+          </label>
+        </section>
+
         {error && <p className="mt-4 text-sm text-blush-deep">{error}</p>}
 
+        {/* Same-day safeguard — catches a future reservation accidentally left
+            at today's date before it's saved. */}
+        {showSameDayConfirm && (
+          <section className="mt-6 rounded-2xl border-2 border-butter-deep/60 bg-butter/40 p-5">
+            <p className="text-[15px] font-bold text-ink">
+              Pickup is today ({fmtShort(startDate)}) — this rents the piece out
+              now.
+            </p>
+            <p className="mt-1 text-[14px] text-ink/70">
+              If this is a reservation for a <strong>future</strong> pickup date,
+              set the pickup date first. Only continue if the customer is taking
+              it home today.
+            </p>
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <button
+                onClick={() => {
+                  setShowSameDayConfirm(false);
+                  startDateRef.current?.focus();
+                  startDateRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                }}
+                className="flex-1 rounded-full border border-ink/25 px-5 py-3 text-[15px] text-ink/70"
+              >
+                It&apos;s a future reservation — set the date
+              </button>
+              <button
+                onClick={() => {
+                  setSameDayConfirmed(true);
+                  setShowSameDayConfirm(false);
+                  checkout(true);
+                }}
+                className="flex-1 rounded-full bg-ink px-5 py-3 text-[15px] text-cream"
+              >
+                Yes, pick up today · {money(totalAfterCredit)}
+              </button>
+            </div>
+          </section>
+        )}
+
         <button
-          onClick={checkout}
-          disabled={submitting || selected.length === 0 || needsReaderChoice}
+          onClick={() => checkout()}
+          disabled={submitting || selected.length === 0 || needsReaderChoice || !!closedPickup || conflictPieces.length > 0}
           className="mt-6 w-full rounded-full bg-ink px-6 py-4 text-base text-cream transition-opacity disabled:opacity-40"
         >
           {submitting
@@ -1112,15 +1375,69 @@ function CheckoutInner() {
             : needsReaderChoice
               ? "Pick a reader above to continue"
               : useTerminal
-                ? `Charge on reader & check out · ${money(total)}`
-                : `Collect payment & check out · ${money(total)}`}
+                ? `Charge on reader & ${reserving ? "reserve" : "check out"} · ${money(totalAfterCredit)}`
+                : `Collect payment & ${reserving ? "reserve" : "check out"} · ${money(totalAfterCredit)}`}
         </button>
         <p className="mt-2 text-center text-xs text-ink/40">
-          {useTerminal
-            ? "Creates the order, then prompts the customer to tap their card on the reader."
-            : "Payment is collected on the card reader; this records the transaction and marks pieces Rented Out."}
+          {reserving
+            ? `Future pickup (${fmtShort(startDate)}): this is a reservation — full payment now holds the piece, and it's marked picked up when they come in. Refundable (rental price) up to 48 hours before pickup.`
+            : useTerminal
+              ? "Creates the order, then prompts the customer to tap their card on the reader."
+              : "Payment is collected on the card reader; this records the transaction and marks pieces Rented Out."}
         </p>
       </div>
+
+      {/* Condition disclosure — flaws must be shown to the customer first */}
+      {disclosePiece && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-ink/50 px-5"
+          onClick={() => setDisclosePiece(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-3xl bg-white p-7 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-[12px] font-semibold uppercase tracking-[0.15em] text-blush-deep">
+              ⚠️ Condition — show the customer
+            </p>
+            <h2 className="mt-2 font-serif text-2xl font-medium">
+              {disclosePiece.brand} has a noted condition
+            </h2>
+            <div className="mt-3 whitespace-pre-line rounded-2xl border border-blush/50 bg-blush/10 p-4 text-[15px] leading-relaxed text-ink">
+              {disclosableCondition(disclosePiece)}
+            </div>
+            <p className="mt-3 text-[14px] text-ink/60">
+              Point this out to the customer and make sure they still want to take it.
+            </p>
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+              <button
+                onClick={() => setDisclosePiece(null)}
+                className="flex-1 rounded-full border border-ink/20 px-5 py-3 text-[15px] text-ink/60"
+              >
+                Don&apos;t add it
+              </button>
+              <button
+                onClick={() => {
+                  const it = disclosePiece;
+                  setAckedDisclosures((s) => {
+                    const n = new Set(s);
+                    n.add(it.id);
+                    return n;
+                  });
+                  setSelectedIds((prev) =>
+                    prev.includes(it.id) ? prev : [...prev, it.id]
+                  );
+                  setDisclosePiece(null);
+                  beep(true);
+                }}
+                className="flex-1 rounded-full bg-ink px-5 py-3 text-[15px] text-cream"
+              >
+                They still want it — add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* In-person tap overlay */}
       {tap && (
@@ -1132,7 +1449,7 @@ function CheckoutInner() {
                 <h2 className="font-serif text-2xl font-medium">Tap to pay</h2>
                 <p className="mt-2 text-[15px] text-ink/60">
                   Ask the customer to tap, insert, or swipe their card on the
-                  reader to pay {money(total)}.
+                  reader to pay {money(totalAfterCredit)}.
                 </p>
                 <button
                   onClick={cancelTap}

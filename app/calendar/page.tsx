@@ -31,6 +31,9 @@ export default function CalendarPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [actMsg, setActMsg] = useState("");
+  const [actError, setActError] = useState("");
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [bookingOpen, setBookingOpen] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -44,9 +47,18 @@ export default function CalendarPage() {
     const { from, to } = monthRange(cursor);
     let alive = true;
     async function load() {
-      const res = await fetch(`/api/rentals?from=${from}&to=${to}`);
-      if (res.ok && alive) setRentals(await res.json());
-      if (alive) setLoaded(true);
+      try {
+        const res = await fetch(`/api/rentals?from=${from}&to=${to}`);
+        if (!res.ok) throw new Error(`rentals ${res.status}`);
+        if (alive) {
+          setRentals(await res.json());
+          setLoadError("");
+        }
+      } catch {
+        if (alive) setLoadError("Couldn't load bookings — refresh to try again.");
+      } finally {
+        if (alive) setLoaded(true);
+      }
     }
     load();
     const interval = setInterval(load, 60_000);
@@ -61,16 +73,21 @@ export default function CalendarPage() {
 
   useEffect(() => {
     (async () => {
-      const [ir, cr] = await Promise.all([
-        fetch("/api/items"),
-        fetch("/api/customers"),
-      ]);
-      if (ir.ok) setItems(await ir.json());
-      if (cr.ok) setCustomers(await cr.json());
-      const sr = await fetch("/api/settings");
-      if (sr.ok) {
-        const s = await sr.json();
-        if (s.program?.turnaround_days != null) setBuffer(Number(s.program.turnaround_days));
+      try {
+        const [ir, cr] = await Promise.all([
+          fetch("/api/items"),
+          fetch("/api/customers"),
+        ]);
+        if (ir.ok) setItems(await ir.json());
+        if (cr.ok) setCustomers(await cr.json());
+        const sr = await fetch("/api/settings");
+        if (sr.ok) {
+          const s = await sr.json();
+          if (s.program?.turnaround_days != null) setBuffer(Number(s.program.turnaround_days));
+        }
+      } catch {
+        // Booking helpers (items/customers/settings) couldn't load — the
+        // calendar itself still renders; lists stay empty.
       }
     })();
   }, []);
@@ -119,35 +136,42 @@ export default function CalendarPage() {
     [rentals, today]
   );
 
-  async function act(rental: Rental, action: "pickup" | "cancel") {
+  async function act(rental: Rental, action: "pickup" | "cancel" | "ship") {
     if (action === "cancel" && !window.confirm("Cancel this booking?")) return;
     setBusyId(rental.id);
-    const res = await fetch(`/api/rentals/${rental.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action }),
-    });
-    if (res.ok) {
-      const updated: Rental & {
-        cancellation?: { outcome: string; amount: number };
-      } = await res.json();
-      setRentals((prev) =>
-        prev.map((r) => (r.id === updated.id ? updated : r))
-      );
-      const c = updated.cancellation;
-      if (c) {
-        const msg =
-          c.outcome === "refund"
-            ? `Canceled — full refund of $${c.amount} issued to the card.`
-            : c.outcome === "refund_failed"
-              ? `Canceled — but the refund didn't go through automatically. Refund $${c.amount} in Stripe.`
-              : c.outcome === "credit"
-                ? `Canceled within 48 hrs — $${c.amount} store credit added to the customer.`
-                : "Canceled — no refund or credit (no-show, after pickup, or unpaid).";
-        window.alert(msg);
+    setActMsg("");
+    setActError("");
+    try {
+      const res = await fetch(`/api/rentals/${rental.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      if (res.ok) {
+        const updated: Rental & {
+          cancellation?: { outcome: string; amount: number };
+        } = await res.json();
+        setRentals((prev) =>
+          prev.map((r) => (r.id === updated.id ? updated : r))
+        );
+        const c = updated.cancellation;
+        if (c) {
+          const msg =
+            c.outcome === "refund"
+              ? `Canceled — rental price of $${c.amount} refunded to the card (tax is non-refundable).`
+              : c.outcome === "refund_failed"
+                ? `Canceled — but the refund didn't go through automatically. Refund the $${c.amount} rental price in Stripe.`
+                : "Canceled — non-refundable (within 48 hrs of pickup, no-show, after pickup, or unpaid).";
+          setActMsg(msg);
+        }
+      } else {
+        setActError("Couldn't update the booking — try again.");
       }
+    } catch {
+      setActError("Couldn't reach the studio — check your connection and try again.");
+    } finally {
+      setBusyId(null);
     }
-    setBusyId(null);
   }
 
   function monthLabel() {
@@ -162,8 +186,17 @@ export default function CalendarPage() {
   function RentalRow({ r, kind }: { r: Rental; kind: "pickup" | "return" }) {
     const overdue =
       r.status === "active" && dateOnly(r.due_date) < today;
+    const isEcloset = r.source === "ecloset";
+    const buyer = isEcloset
+      ? r.notes?.match(/·\s*([^·]+?)\s*·\s*charged/)?.[1]?.trim() || null
+      : null;
+    const eclosetAmt = r.ecloset_amount != null ? Number(r.ecloset_amount) : null;
     return (
-      <div className="flex items-center gap-3 rounded-2xl bg-white p-3">
+      <div
+        className={`flex items-center gap-3 rounded-2xl p-3 ${
+          isEcloset ? "bg-lavender/20 ring-1 ring-lavender-deep/30" : "bg-white"
+        }`}
+      >
         <div className="h-14 w-11 shrink-0 overflow-hidden rounded-lg bg-lavender/40">
           {r.photo_url ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -184,26 +217,47 @@ export default function CalendarPage() {
             <span className="text-ink/50">
               {r.item_id} · {r.size}
             </span>
-          </p>
-          <p className="truncate text-[13px] text-ink/55">
-            {r.customer_name ?? "No customer"} ·{" "}
-            {fmtShort(dateOnly(r.start_date))} –{" "}
-            {fmtShort(dateOnly(r.due_date))}
-            {overdue && (
-              <span className="ml-1.5 rounded-full bg-blush px-2 py-0.5 text-[11px] font-medium">
-                overdue
+            {isEcloset && (
+              <span className="ml-1.5 rounded-full bg-lavender-deep px-2 py-0.5 align-middle text-[10px] font-medium uppercase tracking-wide text-cream">
+                e.closet
               </span>
             )}
           </p>
+          {isEcloset ? (
+            <>
+              <p className="truncate text-[13px] text-ink/60">
+                {buyer ?? "e.closet renter"} · ships {fmtShort(dateOnly(r.start_date))}, back{" "}
+                {fmtShort(dateOnly(r.due_date))}
+                {overdue && (
+                  <span className="ml-1.5 rounded-full bg-blush px-2 py-0.5 text-[11px] font-medium">overdue</span>
+                )}
+              </p>
+              <p className="truncate text-[12px] text-ink/45">
+                Order #{r.ecloset_order_id ?? "—"}
+                {eclosetAmt != null ? ` · $${eclosetAmt} charged` : ""} · consignor paid on return
+              </p>
+            </>
+          ) : (
+            <p className="truncate text-[13px] text-ink/55">
+              {r.customer_name ?? "No customer"} ·{" "}
+              {fmtShort(dateOnly(r.start_date))} –{" "}
+              {fmtShort(dateOnly(r.due_date))}
+              {overdue && (
+                <span className="ml-1.5 rounded-full bg-blush px-2 py-0.5 text-[11px] font-medium">
+                  overdue
+                </span>
+              )}
+            </p>
+          )}
         </div>
         {kind === "pickup" && r.status === "reserved" && (
           <div className="flex shrink-0 gap-1.5">
             <button
-              onClick={() => act(r, "pickup")}
+              onClick={() => act(r, isEcloset ? "ship" : "pickup")}
               disabled={busyId === r.id}
               className="rounded-full bg-ink px-3.5 py-2 text-[13px] text-cream disabled:opacity-40"
             >
-              Picked up
+              {isEcloset ? "Shipped" : "Picked up"}
             </button>
             <button
               onClick={() => act(r, "cancel")}
@@ -216,7 +270,7 @@ export default function CalendarPage() {
         )}
         {kind === "pickup" && r.status === "active" && (
           <span className="shrink-0 rounded-full bg-blush px-2.5 py-1 text-[11px]">
-            out
+            {isEcloset ? "shipped" : "out"}
           </span>
         )}
         {kind === "pickup" && r.status === "completed" && (
@@ -244,7 +298,7 @@ export default function CalendarPage() {
         {/* Header */}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-4xl font-medium md:text-5xl">Calendar</h1>
+            <h1 className="font-serif text-4xl font-medium md:text-5xl">Calendar</h1>
             <p className="mt-1.5 text-sm text-ink/50">
               {outNow.length} out now ·{" "}
               {rentals.filter((r) => r.status === "reserved").length} reserved
@@ -257,6 +311,11 @@ export default function CalendarPage() {
             + New booking
           </button>
         </div>
+
+        {actMsg && (
+          <p className="mt-5 rounded-2xl bg-sage/25 px-4 py-3 text-sm text-ink/70">{actMsg}</p>
+        )}
+        {actError && <p className="mt-5 text-sm text-blush-deep">{actError}</p>}
 
         {/* Month nav */}
         <div className="mt-7 flex items-center gap-2">
@@ -452,6 +511,8 @@ export default function CalendarPage() {
             <div className="mt-3 space-y-2">
               {!loaded ? (
                 <div className="h-20 animate-pulse rounded-2xl bg-ink/5" />
+              ) : loadError ? (
+                <p className="rounded-2xl bg-white p-4 text-sm text-ink/45">{loadError}</p>
               ) : outNow.length === 0 ? (
                 <p className="rounded-2xl bg-white p-4 text-sm text-ink/45">
                   Nothing is out right now.
@@ -466,6 +527,8 @@ export default function CalendarPage() {
             <div className="mt-3 space-y-2">
               {!loaded ? (
                 <div className="h-20 animate-pulse rounded-2xl bg-ink/5" />
+              ) : loadError ? (
+                <p className="rounded-2xl bg-white p-4 text-sm text-ink/45">{loadError}</p>
               ) : upcoming.length === 0 ? (
                 <p className="rounded-2xl bg-white p-4 text-sm text-ink/45">
                   No reservations on the books — yet.

@@ -2,25 +2,67 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { GlobalSearch, NotificationsBell } from "@/components/StudioTools";
 
-const NAV = [
-  { href: "/today", label: "Today", ready: true },
-  { href: "/inventory", label: "Inventory", ready: true },
-  { href: "/recommended", label: "Recommended", ready: true },
-  { href: "/checkout", label: "Checkout", ready: true },
-  { href: "/orders", label: "Orders", ready: true },
-  { href: "/calendar", label: "Calendar", ready: true },
-  { href: "/returns", label: "Returns", ready: true },
-  { href: "/dropoff", label: "Drop-offs", ready: true },
-  { href: "/consignors", label: "Consignors", ready: true },
-  { href: "/ambassadors", label: "Ambassadors", ready: true },
-  { href: "/finances", label: "Finances", ready: true },
-  { href: "/customers", label: "Customers", ready: true },
-  { href: "/settings", label: "Settings", ready: true },
+type NavItem = { href: string; label: string };
+
+// Grouped navigation. Related views live under one heading so the sidebar reads
+// as a few clear areas instead of one long flat list. "Today" is pinned on top
+// as the daily starting point. Consignor Holds, Drop-offs and Storage & Pickups
+// are grouped together under Consignors.
+const NAV_GROUPS: { section: string | null; items: NavItem[] }[] = [
+  { section: null, items: [{ href: "/today", label: "Today" }] },
+  {
+    section: "Storefront",
+    items: [
+      { href: "/inventory", label: "Inventory" },
+      { href: "/recommended", label: "Recommended" },
+      { href: "/hero", label: "Hero photos" },
+    ],
+  },
+  {
+    section: "Sales",
+    items: [
+      { href: "/checkout", label: "Checkout" },
+      { href: "/quick-charge", label: "Quick Charge" },
+      { href: "/orders", label: "Orders" },
+      { href: "/returns", label: "Returns" },
+    ],
+  },
+  {
+    section: "Reservations",
+    items: [
+      { href: "/calendar", label: "Calendar" },
+      { href: "/lookup", label: "Look up piece" },
+      { href: "/pull-list", label: "Pull List" },
+    ],
+  },
+  {
+    section: "Consignors",
+    items: [
+      { href: "/consignors", label: "Consignors" },
+      { href: "/retrievals", label: "Consignor Holds" },
+      { href: "/dropoff", label: "Drop-offs" },
+      { href: "/pickups", label: "Storage & Pickups" },
+    ],
+  },
+  {
+    section: "Business",
+    items: [
+      { href: "/customers", label: "Customers" },
+      { href: "/finances", label: "Finances" },
+      { href: "/settings", label: "Settings" },
+    ],
+  },
 ];
+
+// Flattened order for the mobile top-bar scroller (section headers don't fit a
+// horizontal pill strip).
+const NAV_FLAT: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
 
   return (
     <div className="min-h-screen md:flex">
@@ -34,30 +76,31 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             Studio
           </span>
         </Link>
-        <nav className="mt-10 flex flex-col gap-1">
-          {NAV.map((item) =>
-            item.ready ? (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`rounded-full px-4 py-3 text-[15px] transition-colors ${
-                  pathname.startsWith(item.href)
-                    ? "bg-ink text-cream"
-                    : "text-ink/70 hover:bg-ink/5"
-                }`}
-              >
-                {item.label}
-              </Link>
-            ) : (
-              <span
-                key={item.href}
-                className="flex items-center justify-between rounded-full px-4 py-2.5 text-[15px] text-ink/30"
-              >
-                {item.label}
-                <span className="text-[9px] uppercase tracking-widest">soon</span>
-              </span>
-            )
-          )}
+        <GlobalSearch variant="sidebar" />
+        <NotificationsBell variant="sidebar" />
+        <nav className="mt-5 flex flex-col gap-1">
+          {NAV_GROUPS.map((group, gi) => (
+            <div key={group.section ?? "top"} className={gi > 0 ? "mt-3" : ""}>
+              {group.section && (
+                <p className="mb-1 px-4 text-[10px] font-medium uppercase tracking-[0.18em] text-ink/35">
+                  {group.section}
+                </p>
+              )}
+              {group.items.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`block rounded-full px-4 py-2.5 text-[15px] transition-colors ${
+                    isActive(item.href)
+                      ? "bg-ink text-cream"
+                      : "text-ink/70 hover:bg-ink/5"
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+          ))}
         </nav>
       </aside>
 
@@ -70,30 +113,23 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               Studio
             </span>
           </Link>
+          <div className="flex items-center gap-2">
+            <GlobalSearch variant="topbar" />
+            <NotificationsBell variant="topbar" />
+          </div>
         </div>
         <nav className="flex gap-1.5 overflow-x-auto px-4 pb-3 [scrollbar-width:none]">
-          {NAV.map((item) =>
-            item.ready ? (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm ${
-                  pathname.startsWith(item.href)
-                    ? "bg-ink text-cream"
-                    : "bg-ink/5 text-ink/70"
-                }`}
-              >
-                {item.label}
-              </Link>
-            ) : (
-              <span
-                key={item.href}
-                className="whitespace-nowrap rounded-full bg-ink/[0.03] px-3.5 py-1.5 text-sm text-ink/30"
-              >
-                {item.label}
-              </span>
-            )
-          )}
+          {NAV_FLAT.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm ${
+                isActive(item.href) ? "bg-ink text-cream" : "bg-ink/5 text-ink/70"
+              }`}
+            >
+              {item.label}
+            </Link>
+          ))}
         </nav>
       </div>
 

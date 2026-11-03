@@ -12,7 +12,13 @@ export async function GET(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const rentals = await sql`
-    SELECT r.*, COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.size, i.color, i.photo_url
+    SELECT r.*, COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.size, i.color, i.photo_url,
+      COALESCE((
+        SELECT SUM(cc.amount - cc.refunded_amount)
+        FROM customer_charges cc
+        WHERE cc.rental_id = r.id AND cc.kind = 'late_fee'
+          AND cc.status = 'succeeded' AND (cc.amount - cc.refunded_amount) > 0
+      ), 0) AS late_fee_refundable
     FROM rentals r
     JOIN items i ON i.id = r.item_id
     WHERE r.customer_id = ${id}
@@ -32,11 +38,24 @@ export async function GET(_req: Request, ctx: Ctx) {
     SELECT rental_id FROM store_credit_entries
     WHERE customer_id = ${id} AND reason = 'post' AND rental_id IS NOT NULL
   `;
+  // Full store-credit activity log — grants (+) and redemptions (−), newest
+  // first, with a readable reference to the rental/order each touched.
+  const creditEntries = await sql`
+    SELECT e.id, e.amount, e.reason, e.note, e.rental_id, e.transaction_id,
+           to_char(e.created_at, 'YYYY-MM-DD') AS created_at,
+           COALESCE(NULLIF(ri.name, ''), ri.brand) AS rental_item
+    FROM store_credit_entries e
+    LEFT JOIN rentals r ON r.id = e.rental_id
+    LEFT JOIN items ri ON ri.id = r.item_id
+    WHERE e.customer_id = ${id}
+    ORDER BY e.created_at DESC, e.id DESC
+  `;
   return NextResponse.json({
     ...customers[0],
     rentals,
     spent,
     credited_rental_ids: credited.map((r) => r.rental_id),
+    credit_entries: creditEntries,
   });
 }
 

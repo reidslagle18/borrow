@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { getDropoffConfig, availableSlots, slotsForDate } from "@/lib/dropoff";
 import { findOrCreateCustomer } from "@/lib/bookings";
+import { currentConsignorRate } from "@/lib/rates";
 import { sendDropoffConfirmation } from "@/lib/email";
+import { createDropoffEvent } from "@/lib/gcal";
 
 function authed(request: Request): boolean {
   const key = request.headers.get("x-api-key");
@@ -89,15 +91,43 @@ export async function POST(request: Request) {
        OR (${digits}::text <> '' AND regexp_replace(COALESCE(phone,''), '\\D', '', 'g') = ${digits})
     LIMIT 1
   `;
-  const consignorId = cons[0]?.id ?? null;
+  let consignorId = cons[0]?.id ?? null;
+
+  // Pre-create a consignor account from the booking details so their name,
+  // phone and email are already on file. When they actually come in, the owner
+  // just clicks "Send setup email" — no retyping. We deliberately send NOTHING
+  // now: people skip appointments, so the payout-setup email is always a manual
+  // step. Non-fatal — the appointment still books if this hiccups.
+  if (!consignorId && name && (email || phone)) {
+    try {
+      const created = await sql`
+        INSERT INTO consignors (name, email, phone, notes, portal_code)
+        VALUES (${name}, ${email || null}, ${phone || null},
+                ${"Started from a drop-off booking — send setup email when they come in."},
+                upper(substr(md5(random()::text), 1, 8)))
+        RETURNING id
+      `;
+      consignorId = created[0]?.id ?? null;
+    } catch (err) {
+      console.log(`[dropoff] consignor pre-create skipped:`, (err as Error).message);
+    }
+  }
+
+  // Secret token so the person who booked can manage their own appointment
+  // (cancel/reschedule) from a link in their confirmation email.
+  const manageToken = crypto.randomUUID();
+
+  // The rate this booking locks in / is promised = the rate in effect today
+  // (per the consignor rate schedule).
+  const promisedRate = await currentConsignorRate();
 
   let appt;
   try {
     const rows = await sql`
       INSERT INTO drop_off_appointments
-        (slot_date, slot_time, name, phone, email, item_count, customer_id, consignor_id)
+        (slot_date, slot_time, name, phone, email, item_count, customer_id, consignor_id, manage_token, promised_rate)
       VALUES (${date}, ${time}, ${name}, ${phone || null}, ${email || null},
-              ${itemCount}, ${customerId}, ${consignorId})
+              ${itemCount}, ${customerId}, ${consignorId}, ${manageToken}, ${promisedRate})
       RETURNING *
     `;
     appt = rows[0];
@@ -118,12 +148,33 @@ export async function POST(request: Request) {
       date,
       time,
       itemCount,
+      manageToken,
+      rate: promisedRate,
     });
     console.log(`[dropoff] confirmation to ${email}:`, JSON.stringify(r));
   }
 
+  // Add it to the studio's Google Calendar (no-op unless the integration is
+  // connected). Best-effort — never blocks or fails the booking.
+  try {
+    const eventId = await createDropoffEvent({
+      name,
+      date,
+      time,
+      itemCount,
+      durationMin: cfg.slot_minutes,
+      phone: phone || null,
+      email: email || null,
+    });
+    if (eventId) {
+      await sql`UPDATE drop_off_appointments SET gcal_event_id = ${eventId} WHERE id = ${appt.id}`;
+    }
+  } catch (err) {
+    console.log(`[dropoff] calendar sync failed:`, (err as Error).message);
+  }
+
   return NextResponse.json(
-    { ok: true, date, time, item_count: itemCount, id: appt.id },
+    { ok: true, date, time, item_count: itemCount, id: appt.id, manage_token: manageToken },
     { status: 201 }
   );
 }

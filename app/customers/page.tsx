@@ -10,10 +10,22 @@ const inputCls =
 const labelCls = "mb-1.5 block text-xs uppercase tracking-[0.15em] text-ink/50";
 
 type CustomerRow = Customer & { rental_count: number };
+type CreditEntry = {
+  id: number;
+  amount: number | string;
+  reason: string;
+  note: string | null;
+  rental_id: number | null;
+  transaction_id: number | null;
+  created_at: string;
+  rental_item: string | null;
+};
+
 type CustomerDetail = Customer & {
-  rentals: Rental[];
+  rentals: (Rental & { late_fee_refundable?: number | string })[];
   spent: number;
   credited_rental_ids: number[];
+  credit_entries: CreditEntry[];
 };
 
 const RENTAL_BADGE: Record<RentalStatus, { label: string; cls: string }> = {
@@ -63,9 +75,15 @@ function DetailModal({
   const [flag, setFlag] = useState<"" | "vip" | "problem">("");
   const [saving, setSaving] = useState(false);
 
+  const [loadFailed, setLoadFailed] = useState(false);
+
   async function load() {
-    const res = await fetch(`/api/customers/${id}`);
-    if (res.ok) {
+    try {
+      const res = await fetch(`/api/customers/${id}`);
+      if (!res.ok) {
+        setLoadFailed(true);
+        return;
+      }
       const d: CustomerDetail = await res.json();
       setDetail(d);
       setName(d.name);
@@ -74,6 +92,8 @@ function DetailModal({
       setInstagram(d.instagram ?? "");
       setNotes(d.notes ?? "");
       setFlag(d.flag ?? "");
+    } catch {
+      setLoadFailed(true);
     }
   }
   useEffect(() => {
@@ -135,6 +155,57 @@ function DetailModal({
     }
   }
 
+  const [refunding, setRefunding] = useState<number | null>(null);
+  async function refundLateFee(rentalId: number, amount: number) {
+    if (
+      !window.confirm(
+        `Refund ${money(amount)} in late fees back to this renter's card? This can't be undone.`
+      )
+    )
+      return;
+    setRefunding(rentalId);
+    try {
+      const res = await fetch(`/api/rentals/${rentalId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "refund_late_fee" }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) {
+        onChanged();
+        await load();
+      } else {
+        window.alert(d.error || "Couldn't refund the late fee — try again.");
+      }
+    } finally {
+      setRefunding(null);
+    }
+  }
+
+  const [creditAmt, setCreditAmt] = useState("");
+  const [creditNote, setCreditNote] = useState("");
+  const [granting, setGranting] = useState(false);
+  async function grantCredit() {
+    const amt = Number(creditAmt);
+    if (!(amt > 0)) return;
+    setGranting(true);
+    try {
+      const res = await fetch(`/api/customers/${id}/credit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: amt, note: creditNote.trim() || null }),
+      });
+      if (res.ok) {
+        setCreditAmt("");
+        setCreditNote("");
+        onChanged();
+        await load();
+      }
+    } finally {
+      setGranting(false);
+    }
+  }
+
   const completed =
     detail?.rentals.filter((r) => r.status === "completed").length ?? 0;
 
@@ -147,7 +218,11 @@ function DetailModal({
         className="max-h-[94vh] w-full max-w-2xl overflow-y-auto rounded-t-3xl bg-cream p-6 sm:rounded-3xl sm:p-8"
         onClick={(e) => e.stopPropagation()}
       >
-        {!detail ? (
+        {loadFailed && !detail ? (
+          <p className="rounded-2xl bg-blush/25 p-5 text-sm text-ink/70">
+            Couldn&apos;t load this customer — close and try again.
+          </p>
+        ) : !detail ? (
           <div className="h-40 animate-pulse rounded-2xl bg-ink/5" />
         ) : (
           <>
@@ -249,12 +324,97 @@ function DetailModal({
               </span>
             </div>
 
-            {Number(detail.store_credit) > 0 && (
-              <p className="mt-3 rounded-2xl bg-sage/30 px-4 py-2.5 text-sm">
-                <span className="font-medium">{money(detail.store_credit)} store credit</span>{" "}
-                — applies automatically at their next checkout.
-              </p>
-            )}
+            {/* Store credit — balance, manual grant, and full activity log */}
+            <div className="mt-4 rounded-2xl border border-ink/10 bg-white p-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-medium">Store credit</h3>
+                <span className="text-lg font-medium text-sage-deep">
+                  {money(detail.store_credit)}
+                </span>
+              </div>
+              {Number(detail.store_credit) > 0 && (
+                <p className="mt-0.5 text-[12px] text-ink/45">
+                  Applies automatically at their next checkout, online or in-store.
+                </p>
+              )}
+
+              {/* Grant credit */}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-ink/40">$</span>
+                  <input
+                    value={creditAmt}
+                    onChange={(e) => setCreditAmt(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="50"
+                    className="w-24 rounded-full border border-ink/15 bg-white py-2 pl-6 pr-3 text-sm outline-none focus:border-ink/40"
+                  />
+                </div>
+                <input
+                  value={creditNote}
+                  onChange={(e) => setCreditNote(e.target.value)}
+                  placeholder="Reason (e.g. Instagram giveaway winner)"
+                  className="min-w-0 flex-1 rounded-full border border-ink/15 bg-white px-4 py-2 text-sm outline-none focus:border-ink/40"
+                />
+                <button
+                  onClick={grantCredit}
+                  disabled={granting || !(Number(creditAmt) > 0)}
+                  className="shrink-0 rounded-full bg-ink px-4 py-2 text-sm text-cream disabled:opacity-40"
+                >
+                  {granting ? "Adding…" : "Grant credit"}
+                </button>
+              </div>
+
+              {/* Activity log */}
+              {detail.credit_entries && detail.credit_entries.length > 0 && (
+                <div className="mt-4">
+                  <p className="mb-1.5 text-[12px] uppercase tracking-[0.15em] text-ink/45">
+                    Activity
+                  </p>
+                  <div className="space-y-1.5">
+                    {detail.credit_entries.map((e) => {
+                      const amt = Number(e.amount);
+                      const isGrant = amt >= 0;
+                      const label =
+                        e.reason === "grant"
+                          ? e.note || "Manual grant"
+                          : e.reason === "post"
+                            ? `Post credit${e.rental_item ? ` · ${e.rental_item}` : ""}`
+                            : e.reason === "redeem"
+                              ? `Used${
+                                  e.transaction_id
+                                    ? ` · order #${e.transaction_id}`
+                                    : e.rental_item
+                                      ? ` · ${e.rental_item}`
+                                      : ""
+                                }`
+                              : e.reason;
+                      return (
+                        <div
+                          key={e.id}
+                          className="flex items-center justify-between gap-3 rounded-xl bg-cream px-3 py-2 text-[13px]"
+                        >
+                          <span className="min-w-0 truncate text-ink/70">
+                            <span className="text-ink/40">
+                              {fmtShort(dateOnly(e.created_at))}
+                            </span>{" "}
+                            · {label}
+                          </span>
+                          <span
+                            className={`shrink-0 font-medium ${
+                              isGrant ? "text-sage-deep" : "text-blush-deep"
+                            }`}
+                          >
+                            {isGrant ? "+" : "−"}
+                            {money(Math.abs(amt))}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Rental history */}
             <h3 className="mt-6 text-xl font-medium">
@@ -308,6 +468,20 @@ function DetailModal({
                               + post credit
                             </button>
                           ))}
+                        {Number(r.late_fee_refundable) > 0 && (
+                          <button
+                            onClick={() =>
+                              refundLateFee(r.id, Number(r.late_fee_refundable))
+                            }
+                            disabled={refunding === r.id}
+                            className="rounded-full border border-blush-deep/40 bg-blush/25 px-2.5 py-1 text-[11px] text-ink/70 disabled:opacity-50"
+                            title="Refund the auto-charged late fee back to the renter's card"
+                          >
+                            {refunding === r.id
+                              ? "refunding…"
+                              : `↩ refund ${money(Number(r.late_fee_refundable))} late fee`}
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -325,13 +499,22 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState<CustomerRow[] | null>(null);
   const [openId, setOpenId] = useState<number | null>(null);
   const [q, setQ] = useState("");
+  const [loadError, setLoadError] = useState("");
 
   async function load() {
-    const res = await fetch("/api/customers");
-    if (res.ok) setCustomers(await res.json());
+    try {
+      const res = await fetch("/api/customers");
+      if (res.ok) setCustomers(await res.json());
+      else setLoadError("Couldn't load customers — refresh to try again.");
+    } catch {
+      setLoadError("Couldn't load customers — check your connection and refresh.");
+    }
   }
   useEffect(() => {
     load();
+    // Deep link: /customers?open=ID (from global search / notifications).
+    const openParam = new URLSearchParams(window.location.search).get("open");
+    if (openParam) setOpenId(Number(openParam));
   }, []);
 
   const list = (customers ?? []).filter((c) => {
@@ -347,7 +530,7 @@ export default function CustomersPage() {
   return (
     <AppShell>
       <div className="mx-auto max-w-4xl px-5 py-8 md:px-10 md:py-12">
-        <h1 className="text-4xl font-medium md:text-5xl">Customers</h1>
+        <h1 className="font-serif text-4xl font-medium md:text-5xl">Customers</h1>
         <p className="mt-1.5 text-sm text-ink/50">
           {customers?.length ?? "…"} customers · new ones appear automatically
           when you book them
@@ -361,7 +544,9 @@ export default function CustomersPage() {
         />
 
         <div className="mt-5 space-y-2">
-          {customers === null ? (
+          {loadError ? (
+            <p className="rounded-2xl bg-blush/25 p-5 text-sm text-ink/70">{loadError}</p>
+          ) : customers === null ? (
             Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="h-20 animate-pulse rounded-2xl bg-ink/5" />
             ))

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
-import { CONSIGNOR_SHARE } from "@/lib/types";
+import { consignorShare } from "@/lib/types";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -42,11 +42,45 @@ export async function GET(_req: Request, ctx: Ctx) {
     .reduce((s, p) => s + Number(p.amount), 0);
   const charged = charges.reduce((s, c) => s + Number(c.amount), 0);
 
+  // Why this consignor is at their rate: the earlier of their first drop-off
+  // booking or their signing determined it (item 7 — admin visibility).
+  const c0 = consignors[0];
+  const apptRows = await sql`
+    SELECT to_char(MIN(created_at), 'YYYY-MM-DD') AS first_booking
+    FROM drop_off_appointments a
+    WHERE a.consignor_id = ${id}
+       OR (COALESCE(${c0.email}, '') <> '' AND lower(a.email) = lower(${c0.email}))
+  `;
+  const firstBooking: string | null = apptRows[0]?.first_booking ?? null;
+  const signedAt: string | null = c0.agreement_signed_at
+    ? new Date(c0.agreement_signed_at).toISOString().slice(0, 10)
+    : null;
+  let rateBasis: string;
+  let rateBasisDate: string | null;
+  if (firstBooking && (!signedAt || firstBooking <= signedAt)) {
+    rateBasis = "appointment booking";
+    rateBasisDate = firstBooking;
+  } else if (signedAt) {
+    rateBasis = "agreement signing";
+    rateBasisDate = signedAt;
+  } else if (firstBooking) {
+    rateBasis = "appointment booking";
+    rateBasisDate = firstBooking;
+  } else {
+    rateBasis = "new default";
+    rateBasisDate = null;
+  }
+
+  const share = consignorShare(c0.consignor_rate);
   return NextResponse.json({
     ...consignors[0],
+    rate: Math.round(share * 100),
+    rate_basis: rateBasis,
+    rate_basis_date: rateBasisDate,
+    rate_locked: c0.consignor_rate != null,
     items: items.map((i) => ({
       ...i,
-      earned: Math.round(Number(i.revenue) * CONSIGNOR_SHARE * 100) / 100,
+      earned: Math.round(Number(i.revenue) * share * 100) / 100,
     })),
     payouts,
     charges,

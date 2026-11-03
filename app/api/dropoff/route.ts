@@ -12,6 +12,8 @@ export async function GET(request: Request) {
   if (date) {
     return NextResponse.json({ slots: await availableSlots(date) });
   }
+  // Booked appointments, plus any the studio cancelled that still owe the
+  // customer a new time (needs_reschedule) so they surface for rescheduling.
   const rows = await sql`
     SELECT a.*,
            cu.name AS customer_name,
@@ -20,6 +22,7 @@ export async function GET(request: Request) {
     LEFT JOIN customers cu ON cu.id = a.customer_id
     LEFT JOIN consignors co ON co.id = a.consignor_id
     WHERE a.status = 'booked'
+       OR (a.status = 'cancelled' AND a.needs_reschedule = true)
     ORDER BY a.slot_date ASC, a.slot_time ASC
   `;
   return NextResponse.json(rows);

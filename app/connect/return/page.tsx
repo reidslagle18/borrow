@@ -33,8 +33,9 @@ export default async function ConnectReturnPage({
             <h1 className="mt-3 font-serif text-3xl font-medium">You&apos;re all set</h1>
             <p className="mt-3 text-[15px] leading-relaxed text-ink/60">
               Thanks for setting up your payout info. Once one of your pieces
-              rents, you&apos;ll earn 60% — paid out on your regular cycle. You can
-              close this tab.
+              rents, you&apos;ll earn your consignor share — and once it&apos;s
+              returned, your payout arrives in your bank within 3–5 business
+              days. You can close this tab.
             </p>
           </>
         )}

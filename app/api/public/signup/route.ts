@@ -23,9 +23,11 @@ export async function POST(request: Request) {
   const phone = (b.phone || "").trim();
   const digits = phone.replace(/\D/g, "");
 
-  if (!name || !email || !email.includes("@") || digits.length < 7) {
+  // Require a full name (first + last), plus a real email and phone.
+  const nameParts = name.split(/\s+/).filter(Boolean);
+  if (nameParts.length < 2 || !email || !email.includes("@") || digits.length < 7) {
     return NextResponse.json(
-      { error: "Name, a real email and a real phone number are required" },
+      { error: "First and last name, a real email and a real phone number are required" },
       { status: 400 }
     );
   }

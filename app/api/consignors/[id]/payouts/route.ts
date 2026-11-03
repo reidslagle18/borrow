@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { sendPayoutNotice } from "@/lib/email";
+import { todayISO } from "@/lib/dates";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -24,7 +25,7 @@ export async function POST(request: Request, ctx: Ctx) {
   const rows = await sql`
     INSERT INTO payouts (consignor_id, amount, method, notes, paid_at)
     VALUES (${id}, ${amount}, ${b.method || null}, ${b.notes || null},
-            ${b.paid_at || new Date().toISOString().slice(0, 10)})
+            ${b.paid_at || todayISO()})
     RETURNING *
   `;
 
