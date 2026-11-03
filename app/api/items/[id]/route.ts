@@ -420,6 +420,37 @@ export async function PATCH(request: Request, ctx: Ctx) {
     return NextResponse.json(rows[0]);
   }
 
+  // Star / un-star a piece as Featured (admin only). Turning it on appends it to
+  // the end of the featured order; turning it off clears its rank. The featured
+  // flag is never touched by the full edit form below, so it persists.
+  if (b.action === "toggle_featured") {
+    if (!(await requireAdmin()))
+      return NextResponse.json({ error: "Admins only" }, { status: 403 });
+    const on = b.featured === true;
+    let rows;
+    if (on) {
+      rows = await sql`
+        UPDATE items SET
+          featured = true,
+          featured_rank = COALESCE(
+            featured_rank,
+            (SELECT COALESCE(MAX(featured_rank), 0) + 1 FROM items WHERE featured)
+          ),
+          updated_at = now()
+        WHERE id = ${id} OR barcode = ${id}
+        RETURNING *`;
+    } else {
+      rows = await sql`
+        UPDATE items SET featured = false, featured_rank = NULL, updated_at = now()
+        WHERE id = ${id} OR barcode = ${id}
+        RETURNING *`;
+    }
+    if (rows.length === 0)
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    await logAudit("item_featured", { entity: "item", entityId: rows[0].id, detail: { featured: on } }, session);
+    return NextResponse.json(rows[0]);
+  }
+
   // Staff-side approval resolution (e.g. after an in-person dispute review):
   // approve the value directly, or reset a disputed piece back to pending so
   // the consignor can approve it again.

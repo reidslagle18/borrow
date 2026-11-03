@@ -748,6 +748,13 @@ async function createSchema(): Promise<void> {
   // ambassador_program app_setting; these are the per-piece tags.
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS occasion_tags TEXT[] NOT NULL DEFAULT '{}'`;
   await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS sub_occasion_tags TEXT[] NOT NULL DEFAULT '{}'`;
+  // Featured curation (replaces the old Recommended pinning). `featured` is the
+  // owner's star toggle; `featured_rank` is the manual order shown in the shop's
+  // Featured section (lower = earlier). NULL rank sorts last. The shop only shows
+  // featured pieces that are also normally listed (handled by the availability feed).
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS featured BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE items ADD COLUMN IF NOT EXISTS featured_rank INT`;
+  await sql`CREATE INDEX IF NOT EXISTS items_featured_rank ON items (featured_rank) WHERE featured`;
 
   // Allow 'repair' charges (repairable damage — actual repair cost).
   await sql`ALTER TABLE customer_charges DROP CONSTRAINT IF EXISTS customer_charges_kind_check`;

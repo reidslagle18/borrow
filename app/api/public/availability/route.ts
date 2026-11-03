@@ -22,6 +22,7 @@ export async function GET() {
     SELECT
       i.id, COALESCE(NULLIF(i.name, ''), i.brand) AS brand, i.description, i.size, i.color, i.silhouette, i.style_tags, i.occasion_tags, i.sub_occasion_tags, i.tier, i.rental_price, i.retail_value,
       i.event_types, i.photo_url, i.photos, i.status, i.set_group, i.hold_start, i.hold_end,
+      i.featured, i.featured_rank,
       COALESCE(
         json_agg(
           json_build_object(

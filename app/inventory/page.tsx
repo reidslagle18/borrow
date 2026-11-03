@@ -185,6 +185,29 @@ export default function InventoryPage() {
     });
   }
 
+  // Star / un-star a piece as Featured (admin only), straight from its card.
+  const [featBusy, setFeatBusy] = useState<string | null>(null);
+  async function toggleFeatured(item: Item, e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setFeatBusy(item.id);
+    try {
+      const res = await fetch(`/api/items/${encodeURIComponent(item.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "toggle_featured", featured: !item.featured }),
+      });
+      if (res.ok) {
+        const saved = (await res.json()) as Item;
+        setItems((prev) =>
+          (prev ?? []).map((i) => (i.id === saved.id ? { ...i, featured: saved.featured, featured_rank: saved.featured_rank } : i))
+        );
+      }
+    } finally {
+      setFeatBusy(null);
+    }
+  }
+
   function exitSelect() {
     setSelectMode(false);
     setSelected(new Set());
@@ -435,10 +458,31 @@ export default function InventoryPage() {
                         </span>
                       )
                     )}
-                    {item.new_with_tags && (
-                      <span className="absolute bottom-2.5 left-2.5 rounded-full bg-sage-deep px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-cream">
-                        NWT
-                      </span>
+                    <div className="absolute bottom-2.5 left-2.5 flex flex-wrap gap-1.5">
+                      {item.featured && (
+                        <span className="rounded-full bg-[#b8860b] px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-cream">
+                          ★ Featured
+                        </span>
+                      )}
+                      {item.new_with_tags && (
+                        <span className="rounded-full bg-sage-deep px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-cream">
+                          NWT
+                        </span>
+                      )}
+                    </div>
+                    {isAdmin && !selectMode && (
+                      <button
+                        type="button"
+                        onClick={(e) => toggleFeatured(item, e)}
+                        disabled={featBusy === item.id}
+                        aria-label={item.featured ? "Remove from Featured" : "Mark as Featured"}
+                        title={item.featured ? "Remove from Featured" : "Mark as Featured"}
+                        className={`absolute bottom-2.5 right-2.5 flex h-8 w-8 items-center justify-center rounded-full bg-cream/90 text-[16px] leading-none shadow-sm transition-transform hover:scale-110 disabled:opacity-50 ${
+                          item.featured ? "text-[#b8860b]" : "text-ink/40"
+                        }`}
+                      >
+                        {item.featured ? "★" : "☆"}
+                      </button>
                     )}
                   </div>
                   <div className="px-1 pt-2.5">

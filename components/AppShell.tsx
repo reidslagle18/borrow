@@ -10,12 +10,13 @@ import { useMe } from "@/lib/useMe";
 // screens (Checkout + Quick Charge, Orders + Returns, Inventory + Look up + Pull
 // list, and the four consignor screens) are reached through the sub-tab strip
 // rendered under the header. Finances is admin-only.
+type Tab = { href: string; label: string; adminOnly?: boolean };
 type Group = {
   href: string;
   label: string;
   match: string[];
   adminOnly?: boolean;
-  tabs?: { href: string; label: string }[];
+  tabs?: Tab[];
 };
 
 const GROUPS: Group[] = [
@@ -44,6 +45,7 @@ const GROUPS: Group[] = [
     match: ["/inventory", "/lookup", "/pull-list"],
     tabs: [
       { href: "/inventory", label: "Inventory" },
+      { href: "/inventory/featured", label: "Featured", adminOnly: true },
       { href: "/lookup", label: "Look up a piece" },
       { href: "/pull-list", label: "Pull list" },
     ],
@@ -82,7 +84,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const groupActive = (g: Group) =>
     g.match.some((m) => pathname === m || pathname.startsWith(m + "/"));
   const activeGroup = GROUPS.find(groupActive);
-  const tabs = activeGroup?.tabs;
+  const tabs = activeGroup?.tabs?.filter((t) => !t.adminOnly || isAdminView);
+  // The active tab is the longest href that prefixes the current path, so
+  // /inventory/featured highlights "Featured" (not also "Inventory").
+  const activeTabHref = (tabs ?? [])
+    .filter((t) => pathname === t.href || pathname.startsWith(t.href + "/"))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
 
   async function logout() {
     await fetch("/api/logout", { method: "POST" });
@@ -201,12 +208,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         )}
 
         {/* Sub-tab strip for merged sections */}
-        {tabs && (
+        {tabs && tabs.length > 1 && (
           <div className="border-b border-ink/10 bg-cream/60">
             <div className="flex gap-1.5 overflow-x-auto px-5 py-2.5 md:px-10 [scrollbar-width:none]">
               {tabs.map((t) => {
-                const active =
-                  pathname === t.href || pathname.startsWith(t.href + "/");
+                const active = t.href === activeTabHref;
                 return (
                   <Link
                     key={t.href}

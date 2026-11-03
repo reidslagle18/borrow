@@ -44,6 +44,8 @@ export interface Item {
   style_tags?: string[]; // freeform descriptive tags (e.g. "sparkly","backless") — powers smart search
   occasion_tags?: string[]; // top-level occasions (e.g. "Vacation","Date Night") — config-driven, owner-editable in Settings
   sub_occasion_tags?: string[]; // namespaced "Occasion:Sub" (e.g. "Vacation:Beach") so a sub always ties to its parent occasion
+  featured?: boolean; // owner-starred for the shop's Featured section
+  featured_rank?: number | null; // manual order within Featured (lower = earlier)
   new_with_tags: boolean; // brand new, original retail tags still attached
   ambassador_id: number | null; // ambassador who sourced/brought in the piece
   ambassador_name?: string | null;
