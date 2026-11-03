@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useMe } from "@/lib/useMe";
 import AppShell from "@/components/AppShell";
 import ConsignorAgreementModal from "@/components/ConsignorAgreementModal";
 import {
@@ -184,6 +185,8 @@ function DetailModal({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const { me } = useMe();
+  const isAdmin = me?.role === "admin";
   const [detail, setDetail] = useState<ConsignorDetail | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -400,27 +403,30 @@ function DetailModal({
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-1">
-                <button
-                  onClick={() => setEditOpen(true)}
-                  className="rounded-full border border-ink/15 px-3.5 py-1.5 text-sm text-ink/60"
-                >
-                  Edit
-                </button>
-                {confirmingDelete ? (
+                {isAdmin && (
                   <button
-                    onClick={remove}
-                    className="rounded-full border border-blush-deep px-3 py-1.5 text-sm text-blush-deep"
+                    onClick={() => setEditOpen(true)}
+                    className="rounded-full border border-ink/15 px-3.5 py-1.5 text-sm text-ink/60"
                   >
-                    Really delete?
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => setConfirmingDelete(true)}
-                    className="rounded-full border border-ink/15 px-3.5 py-1.5 text-sm text-ink/40"
-                  >
-                    Delete
+                    Edit
                   </button>
                 )}
+                {isAdmin &&
+                  (confirmingDelete ? (
+                    <button
+                      onClick={remove}
+                      className="rounded-full border border-blush-deep px-3 py-1.5 text-sm text-blush-deep"
+                    >
+                      Really delete?
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmingDelete(true)}
+                      className="rounded-full border border-ink/15 px-3.5 py-1.5 text-sm text-ink/40"
+                    >
+                      Delete
+                    </button>
+                  ))}
                 <button
                   onClick={onClose}
                   className="rounded-full px-3 py-1 text-2xl leading-none text-ink/40 hover:bg-ink/5"
@@ -438,7 +444,7 @@ function DetailModal({
             )}
 
             {/* Disputed pieces — needs the admin's decision (surfaced first) */}
-            {(() => {
+            {isAdmin && (() => {
               const disputed = detail.items.filter(
                 (i) => i.approval_status === "disputed"
               );
@@ -555,6 +561,8 @@ function DetailModal({
             })()}
 
             {/* Money summary */}
+            {isAdmin && (
+            <>
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-2xl bg-white p-3.5 text-center">
                 <p className="text-xs uppercase tracking-[0.15em] text-ink/45">Earned ({detail.rate ?? 60}%)</p>
@@ -587,8 +595,12 @@ function DetailModal({
                 Includes {money(detail.cleaning_charges)} in opt-in cleaning charges deducted from earnings.
               </p>
             )}
+            </>
+            )}
 
             {/* Direct deposit (Stripe Connect) */}
+            {isAdmin && (
+            <>
             <div className="mt-4 rounded-2xl bg-white p-4">
               <div className="flex items-center justify-between">
                 <p className={`${labelCls} mb-0`}>Direct deposit</p>
@@ -688,6 +700,8 @@ function DetailModal({
               )}
               {payMsg && <p className="mt-2 text-[13px] text-sage-deep">{payMsg}</p>}
             </div>
+            </>
+            )}
 
             {/* Pieces */}
             <h3 className="mt-6 text-xl font-medium">
@@ -717,7 +731,8 @@ function DetailModal({
                         <span className="text-ink/50">{i.id} · {i.size}</span>
                       </p>
                       <p className="truncate text-[13px] text-ink/55">
-                        rented {i.completed_rentals}× · earned {money(i.earned)}
+                        rented {i.completed_rentals}×
+                        {isAdmin && ` · earned ${money(i.earned)}`}
                       </p>
                     </div>
                     <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] ${STATUS_BADGE[i.status]}`}>
@@ -793,7 +808,7 @@ function DetailModal({
             </div>
 
             {/* Payout history */}
-            {detail.payouts.length > 0 && (
+            {isAdmin && detail.payouts.length > 0 && (
               <>
                 <h3 className="mt-6 text-xl font-medium">Payout history</h3>
                 <div className="mt-2 space-y-1.5">
@@ -816,7 +831,7 @@ function DetailModal({
             )}
 
             {/* Cleaning charges (opt-in) */}
-            {detail.charges.length > 0 && (
+            {isAdmin && detail.charges.length > 0 && (
               <>
                 <h3 className="mt-6 text-xl font-medium">Cleaning charges</h3>
                 <div className="mt-2 space-y-1.5">
@@ -920,6 +935,8 @@ function DetailModal({
 }
 
 export default function ConsignorsPage() {
+  const { me } = useMe();
+  const isAdmin = me?.role === "admin";
   const [consignors, setConsignors] = useState<ConsignorRow[] | null>(null);
   const [openId, setOpenId] = useState<number | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -954,6 +971,11 @@ export default function ConsignorsPage() {
     if (openParam) setOpenId(Number(openParam));
   }, []);
 
+  // Staff never see Earned/Owed; if one of those is the active sort, fall back
+  // to the safe default so the list still renders sensibly.
+  const effectiveSortKey: SortKey =
+    !isAdmin && (sortKey === "earned" || sortKey === "owed") ? "created" : sortKey;
+
   const list = (consignors ?? [])
     .filter((c) => {
       const t = q.trim().toLowerCase();
@@ -966,9 +988,9 @@ export default function ConsignorsPage() {
     .sort((a, b) => {
       const dir = sortDir === "asc" ? 1 : -1;
       let cmp = 0;
-      if (sortKey === "name") cmp = a.name.localeCompare(b.name);
-      else if (sortKey === "earned") cmp = a.earned - b.earned;
-      else if (sortKey === "owed") cmp = a.owed - b.owed;
+      if (effectiveSortKey === "name") cmp = a.name.localeCompare(b.name);
+      else if (effectiveSortKey === "earned") cmp = a.earned - b.earned;
+      else if (effectiveSortKey === "owed") cmp = a.owed - b.owed;
       else cmp = (a.created_at ?? "").localeCompare(b.created_at ?? ""); // created
       // Stable tiebreak so equal values keep a consistent (newest-first) order.
       if (cmp === 0) cmp = (a.created_at ?? "").localeCompare(b.created_at ?? "") || a.id - b.id;
@@ -984,15 +1006,17 @@ export default function ConsignorsPage() {
             <h1 className="font-serif text-4xl font-medium md:text-5xl">Consignors</h1>
             <p className="mt-1.5 text-sm text-ink/50">
               {consignors?.length ?? "…"} consignors
-              {totalOwed > 0 && ` · ${money(totalOwed)} owed in payouts`}
+              {isAdmin && totalOwed > 0 && ` · ${money(totalOwed)} owed in payouts`}
             </p>
           </div>
-          <button
-            onClick={() => setAddOpen(true)}
-            className="rounded-full bg-ink px-6 py-3 text-[15px] text-cream transition-transform active:scale-[0.98]"
-          >
-            + Add consignor
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setAddOpen(true)}
+              className="rounded-full bg-ink px-6 py-3 text-[15px] text-cream transition-transform active:scale-[0.98]"
+            >
+              + Add consignor
+            </button>
+          )}
         </div>
 
         <input
@@ -1005,8 +1029,10 @@ export default function ConsignorsPage() {
         {/* Sort controls — click a column to re-sort; newest-first is default. */}
         <div className="mt-4 flex flex-wrap items-center gap-2 text-[13px]">
           <span className="text-ink/45">Sort by</span>
-          {(["created", "name", "earned", "owed"] as SortKey[]).map((k) => {
-            const active = sortKey === k;
+          {((isAdmin
+            ? ["created", "name", "earned", "owed"]
+            : ["created", "name"]) as SortKey[]).map((k) => {
+            const active = effectiveSortKey === k;
             return (
               <button
                 key={k}
@@ -1061,16 +1087,18 @@ export default function ConsignorsPage() {
                     </span>
                   )}
                 </div>
-                <div className="shrink-0 text-right">
-                  <p className="text-[15px]">{money(c.earned)} earned</p>
-                  {c.owed > 0 ? (
-                    <span className="mt-0.5 inline-block rounded-full bg-butter px-2.5 py-0.5 text-[12px] font-medium">
-                      {money(c.owed)} owed
-                    </span>
-                  ) : (
-                    <p className="text-[12px] text-ink/45">paid up</p>
-                  )}
-                </div>
+                {isAdmin && (
+                  <div className="shrink-0 text-right">
+                    <p className="text-[15px]">{money(c.earned)} earned</p>
+                    {c.owed > 0 ? (
+                      <span className="mt-0.5 inline-block rounded-full bg-butter px-2.5 py-0.5 text-[12px] font-medium">
+                        {money(c.owed)} owed
+                      </span>
+                    ) : (
+                      <p className="text-[12px] text-ink/45">paid up</p>
+                    )}
+                  </div>
+                )}
               </button>
             ))
           )}

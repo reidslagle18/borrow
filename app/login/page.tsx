@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
   const router = useRouter();
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -16,13 +17,17 @@ export default function LoginPage() {
     const res = await fetch("/api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ username: username.trim() || undefined, password }),
     });
     if (res.ok) {
       router.push("/today");
       router.refresh();
     } else {
-      setError("That's not it — try again.");
+      setError(
+        username.trim()
+          ? "That username or password isn't right — try again."
+          : "That's not it — try again."
+      );
       setBusy(false);
     }
   }
@@ -35,6 +40,15 @@ export default function LoginPage() {
           Studio · Private
         </p>
         <form onSubmit={submit} className="mt-10 space-y-4">
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="Staff username (owner: leave blank)"
+            autoCapitalize="none"
+            autoCorrect="off"
+            className="w-full rounded-full border border-ink/15 bg-white px-5 py-3.5 text-center text-base outline-none focus:border-ink/40"
+          />
           <input
             type="password"
             value={password}

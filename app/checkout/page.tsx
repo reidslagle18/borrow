@@ -1105,18 +1105,10 @@ function CheckoutInner() {
           />
         </section>
 
-        {/* Optional give-back campaign code (tags the order; no discount) */}
-        <section className="mt-7">
-          <label className={labelCls}>Campaign code (optional)</label>
-          <input
-            type="text"
-            className={`${inputCls} uppercase`}
-            placeholder="e.g. FIGHT"
-            value={campaignCode}
-            onChange={(e) => setCampaignCode(e.target.value.toUpperCase())}
-            autoCapitalize="characters"
-          />
-        </section>
+        {/* Campaign code field removed from the interface (Part 1). The give-back
+            campaign feature, data, and Orders tagging stay intact; new in-store
+            checkouts simply don't attach a code. campaignCode stays "" so the
+            payload sends null. */}
 
         {/* Card on file (Stripe) — only when there's no tap reader */}
         {stripeEnabled && !useTerminal && (

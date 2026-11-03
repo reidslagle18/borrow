@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 import { getStripe } from "@/lib/stripe";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -11,6 +12,8 @@ type Ctx = { params: Promise<{ id: string }> };
  * (already returned) rentals are left as history.
  */
 export async function POST(_req: Request, ctx: Ctx) {
+  if (!(await requireAdmin()))
+    return NextResponse.json({ error: "Admins only" }, { status: 403 });
   const stripe = getStripe();
   if (!stripe) {
     return NextResponse.json({ error: "Stripe not configured" }, { status: 400 });

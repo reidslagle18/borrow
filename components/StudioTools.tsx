@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fmtShort } from "@/lib/dates";
+import { statusLabel, type ItemStatus } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
 /* Global search (⌘K / "/"): pieces, customers, consignors at once.    */
@@ -16,16 +17,33 @@ type SearchResults = {
 
 const EMPTY: SearchResults = { pieces: [], customers: [], consignors: [] };
 
-export function GlobalSearch({ variant }: { variant: "sidebar" | "topbar" }) {
-  const [open, setOpen] = useState(false);
+export function GlobalSearch({
+  variant,
+}: {
+  variant: "sidebar" | "topbar" | "inline";
+}) {
+  const inline = variant === "inline";
+  const [open, setOpen] = useState(inline);
   const [q, setQ] = useState("");
   const [results, setResults] = useState<SearchResults>(EMPTY);
   const [loading, setLoading] = useState(false);
+  const [hi, setHi] = useState(0); // highlighted row for arrow-key nav
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
-  // ⌘K / Ctrl+K anywhere; "/" when not typing in a field.
+  // Flat list (pieces → customers → consignors) so the arrow keys can move
+  // across groups and Enter opens the highlighted row.
+  const flat: { href: string }[] = [
+    ...results.pieces.map((p) => ({
+      href: `/lookup?code=${encodeURIComponent(p.barcode || p.id)}`,
+    })),
+    ...results.customers.map((c) => ({ href: `/customers?open=${c.id}` })),
+    ...results.consignors.map((c) => ({ href: `/consignors?open=${c.id}` })),
+  ];
+
+  // ⌘K / Ctrl+K anywhere; "/" when not typing in a field. (Modal variants only.)
   useEffect(() => {
+    if (inline) return;
     function onKey(e: KeyboardEvent) {
       const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(
         (e.target as HTMLElement)?.tagName ?? ""
@@ -42,19 +60,20 @@ export function GlobalSearch({ variant }: { variant: "sidebar" | "topbar" }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [inline]);
 
   useEffect(() => {
+    if (inline) return;
     if (open) setTimeout(() => inputRef.current?.focus(), 30);
     else {
       setQ("");
       setResults(EMPTY);
     }
-  }, [open]);
+  }, [open, inline]);
 
-  // Debounced search.
+  // Debounced search — pieces show from the very first character.
   useEffect(() => {
-    if (!open || q.trim().length < 2) {
+    if ((!open && !inline) || q.trim().length < 1) {
       setResults(EMPTY);
       return;
     }
@@ -62,27 +81,156 @@ export function GlobalSearch({ variant }: { variant: "sidebar" | "topbar" }) {
     const t = setTimeout(async () => {
       try {
         const res = await fetch(`/api/search?q=${encodeURIComponent(q.trim())}`);
-        if (res.ok) setResults(await res.json());
+        if (res.ok) {
+          setResults(await res.json());
+          setHi(0);
+        }
       } catch {
         /* leave prior results */
       } finally {
         setLoading(false);
       }
-    }, 220);
+    }, 180);
     return () => clearTimeout(t);
-  }, [q, open]);
+  }, [q, open, inline]);
 
   const go = useCallback(
     (href: string) => {
-      setOpen(false);
+      if (!inline) setOpen(false);
+      setQ("");
+      setResults(EMPTY);
       router.push(href);
     },
-    [router]
+    [router, inline]
   );
 
   const total =
     results.pieces.length + results.customers.length + results.consignors.length;
 
+  // Arrow keys move the highlight; Enter opens it (a barcode scan ends in Enter,
+  // and the best match is highlighted first, so a scan jumps straight to it).
+  function onInputKey(e: React.KeyboardEvent) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHi((h) => Math.min(h + 1, Math.max(flat.length - 1, 0)));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHi((h) => Math.max(h - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const sel = flat[hi] ?? flat[0];
+      if (sel) go(sel.href);
+    } else if (e.key === "Escape" && !inline) {
+      setOpen(false);
+    }
+  }
+
+  const resultsBody =
+    q.trim().length < 1 ? (
+      inline ? null : (
+        <p className="px-3 py-6 text-center text-[13px] text-ink/40">
+          Type to search — barcode, brand, color, customer, or consignor.
+        </p>
+      )
+    ) : loading && total === 0 ? (
+      <p className="px-3 py-6 text-center text-[13px] text-ink/40">Searching…</p>
+    ) : total === 0 ? (
+      <p className="px-3 py-6 text-center text-[13px] text-ink/40">
+        Nothing matches “{q.trim()}”.
+      </p>
+    ) : (
+      <div className="max-h-[55vh] overflow-y-auto p-2">
+        {results.pieces.length > 0 && (
+          <Group label="Pieces">
+            {results.pieces.map((p, i) => (
+              <ResultRow
+                key={p.id}
+                active={i === hi}
+                onClick={() =>
+                  go(`/lookup?code=${encodeURIComponent(p.barcode || p.id)}`)
+                }
+              >
+                <span className="flex h-9 w-7 shrink-0 items-center justify-center overflow-hidden rounded bg-lavender/40">
+                  {p.photo_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={p.photo_url} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="font-serif italic text-ink/30">
+                      {p.label.charAt(0)}
+                    </span>
+                  )}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[15px]">{p.label}</span>
+                  <span className="block truncate font-mono text-[12px] text-ink/45">
+                    {p.barcode || p.id}
+                  </span>
+                </span>
+                <StatusChip status={p.status} />
+              </ResultRow>
+            ))}
+          </Group>
+        )}
+        {results.customers.length > 0 && (
+          <Group label="Customers">
+            {results.customers.map((c, i) => (
+              <ResultRow
+                key={c.id}
+                active={results.pieces.length + i === hi}
+                onClick={() => go(`/customers?open=${c.id}`)}
+              >
+                <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                <span className="shrink-0 text-[12px] text-ink/40">
+                  {c.phone || c.email || ""}
+                </span>
+              </ResultRow>
+            ))}
+          </Group>
+        )}
+        {results.consignors.length > 0 && (
+          <Group label="Consignors">
+            {results.consignors.map((c, i) => (
+              <ResultRow
+                key={c.id}
+                active={
+                  results.pieces.length + results.customers.length + i === hi
+                }
+                onClick={() => go(`/consignors?open=${c.id}`)}
+              >
+                <span className="min-w-0 flex-1 truncate">{c.name}</span>
+                <span className="shrink-0 text-[12px] text-ink/40">
+                  {c.phone || c.email || ""}
+                </span>
+              </ResultRow>
+            ))}
+          </Group>
+        )}
+      </div>
+    );
+
+  // Always-visible inline box (top of Inventory).
+  if (inline) {
+    return (
+      <div>
+        <input
+          ref={inputRef}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={onInputKey}
+          inputMode="search"
+          placeholder="Look up a piece — scan or type a barcode, or search…"
+          className="w-full rounded-full border border-ink/15 bg-white px-5 py-3 text-base outline-none focus:border-ink/40"
+        />
+        {q.trim().length >= 1 && (
+          <div className="mt-2 overflow-hidden rounded-2xl border border-ink/10 bg-cream">
+            {resultsBody}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Modal (sidebar / topbar triggers).
   return (
     <>
       {variant === "sidebar" ? (
@@ -121,78 +269,11 @@ export function GlobalSearch({ variant }: { variant: "sidebar" | "topbar" }) {
               ref={inputRef}
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search pieces, customers, consignors…"
+              onKeyDown={onInputKey}
+              placeholder="Search — barcode, brand, color, customer, consignor…"
               className="w-full border-b border-ink/10 bg-transparent px-5 py-4 text-base outline-none"
             />
-            <div className="max-h-[55vh] overflow-y-auto p-2">
-              {q.trim().length < 2 ? (
-                <p className="px-3 py-6 text-center text-[13px] text-ink/40">
-                  Type to search the whole studio.
-                </p>
-              ) : loading && total === 0 ? (
-                <p className="px-3 py-6 text-center text-[13px] text-ink/40">
-                  Searching…
-                </p>
-              ) : total === 0 ? (
-                <p className="px-3 py-6 text-center text-[13px] text-ink/40">
-                  Nothing matches “{q.trim()}”.
-                </p>
-              ) : (
-                <>
-                  {results.pieces.length > 0 && (
-                    <Group label="Pieces">
-                      {results.pieces.map((p) => (
-                        <Row
-                          key={p.id}
-                          onClick={() =>
-                            go(`/inventory/${encodeURIComponent(p.barcode || p.id)}`)
-                          }
-                        >
-                          <span className="flex h-9 w-7 shrink-0 items-center justify-center overflow-hidden rounded bg-lavender/40">
-                            {p.photo_url ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img src={p.photo_url} alt="" className="h-full w-full object-cover" />
-                            ) : (
-                              <span className="font-serif italic text-ink/30">
-                                {p.label.charAt(0)}
-                              </span>
-                            )}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate">{p.label}</span>
-                          <span className="shrink-0 text-[12px] text-ink/40">
-                            {p.size} · {p.status}
-                          </span>
-                        </Row>
-                      ))}
-                    </Group>
-                  )}
-                  {results.customers.length > 0 && (
-                    <Group label="Customers">
-                      {results.customers.map((c) => (
-                        <Row key={c.id} onClick={() => go(`/customers?open=${c.id}`)}>
-                          <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                          <span className="shrink-0 text-[12px] text-ink/40">
-                            {c.phone || c.email || ""}
-                          </span>
-                        </Row>
-                      ))}
-                    </Group>
-                  )}
-                  {results.consignors.length > 0 && (
-                    <Group label="Consignors">
-                      {results.consignors.map((c) => (
-                        <Row key={c.id} onClick={() => go(`/consignors?open=${c.id}`)}>
-                          <span className="min-w-0 flex-1 truncate">{c.name}</span>
-                          <span className="shrink-0 text-[12px] text-ink/40">
-                            {c.phone || c.email || ""}
-                          </span>
-                        </Row>
-                      ))}
-                    </Group>
-                  )}
-                </>
-              )}
-            </div>
+            {resultsBody}
           </div>
         </div>
       )}
@@ -211,14 +292,32 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function Row({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+function ResultRow({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[15px] hover:bg-ink/5"
+      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[15px] ${
+        active ? "bg-ink/10" : "hover:bg-ink/5"
+      }`}
     >
       {children}
     </button>
+  );
+}
+
+function StatusChip({ status }: { status: string }) {
+  return (
+    <span className="shrink-0 rounded-full bg-ink/5 px-2 py-0.5 text-[11px] text-ink/55">
+      {statusLabel(status as ItemStatus)}
+    </span>
   );
 }
 

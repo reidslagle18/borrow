@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 import { sendPayoutNotice } from "@/lib/email";
 import { todayISO } from "@/lib/dates";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function POST(request: Request, ctx: Ctx) {
+  if (!(await requireAdmin()))
+    return NextResponse.json({ error: "Admins only" }, { status: 403 });
   await ensureSchema();
   const { id } = await ctx.params;
   const b = await request.json();

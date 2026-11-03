@@ -761,6 +761,46 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE customer_charges ADD COLUMN IF NOT EXISTS refunded_amount NUMERIC(10,2) NOT NULL DEFAULT 0`;
   // Backfill: charges already marked fully refunded get their whole amount.
   await sql`UPDATE customer_charges SET refunded_amount = amount WHERE refunded_at IS NOT NULL AND refunded_amount = 0`;
+
+  // ---- Staff logins & roles (Part 2) --------------------------------------
+  // The owner authenticates with APP_PASSWORD and is always treated as 'admin'
+  // (no row needed). Rows here are additional front-desk logins the owner adds.
+  // password_hash is PBKDF2 (salt embedded — see lib/auth.ts). Setting
+  // active=false disables a login in one click (no data access; next /api/me 401s
+  // them back to the login screen).
+  await sql`
+    CREATE TABLE IF NOT EXISTS staff_users (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      username TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'staff' CHECK (role IN ('admin','staff')),
+      active BOOLEAN NOT NULL DEFAULT true,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_login_at TIMESTAMPTZ
+    )
+  `;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS staff_users_username_key
+    ON staff_users (lower(username))`;
+
+  // ---- Audit log (Part 2) --------------------------------------------------
+  // Who did each checkout, return, status change, and hold action, with a name
+  // + timestamp. actor_id is a staff_users.id, or NULL for the owner.
+  await sql`
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id SERIAL PRIMARY KEY,
+      actor_id INT,
+      actor_name TEXT NOT NULL,
+      actor_role TEXT NOT NULL,
+      action TEXT NOT NULL,
+      entity TEXT,
+      entity_id TEXT,
+      detail JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS audit_log_created ON audit_log (created_at DESC)`;
+  await sql`CREATE INDEX IF NOT EXISTS audit_log_entity ON audit_log (entity, entity_id)`;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */

@@ -12,7 +12,7 @@ export async function GET() {
   await ensureSchema();
   const lead = lastSafeRentalLeadDays(await getProgram());
 
-  const [pickups, returnsToday, overdue, dropoffs, pullReservations] = await Promise.all([
+  const [pickups, returnsToday, overdue, dropoffs, pullReservations, consignorPulls] = await Promise.all([
     sql`
       SELECT r.id, r.item_id, r.status, r.start_date, r.due_date,
              c.name AS customer_name,
@@ -66,6 +66,25 @@ export async function GET() {
         AND (r.start_date - ${lead}::int) <= (now() AT TIME ZONE 'America/Chicago')::date + 3
       ORDER BY (r.start_date - ${lead}::int) ASC
     `,
+    // Consignor pulls: pieces a consignor asked back (a self-hold/retrieval) that
+    // starts today or tomorrow. Staff still have to pull these off the rack.
+    sql`
+      SELECT rr.id AS request_id, i.id AS item_id, i.barcode, i.size, i.photo_url,
+             i.location,
+             COALESCE(NULLIF(i.name, ''), i.brand) AS brand,
+             c.name AS consignor_name,
+             to_char(rr.hold_start, 'YYYY-MM-DD') AS hold_start,
+             to_char(rr.hold_end, 'YYYY-MM-DD') AS hold_end,
+             rr.note,
+             (rr.pulled_at IS NOT NULL) AS pulled
+      FROM retrieval_requests rr
+      JOIN items i ON i.id = rr.item_id
+      JOIN consignors c ON c.id = rr.consignor_id
+      WHERE rr.status = 'open' AND rr.hold_start IS NOT NULL
+        AND rr.hold_start >= (now() AT TIME ZONE 'America/Chicago')::date
+        AND rr.hold_start <= (now() AT TIME ZONE 'America/Chicago')::date + 1
+      ORDER BY rr.hold_start ASC
+    `,
   ]);
 
   return NextResponse.json(
@@ -75,6 +94,7 @@ export async function GET() {
       overdue,
       dropoffs,
       pull_reservations: pullReservations,
+      consignor_pulls: consignorPulls,
     },
     { headers: { "Cache-Control": "no-store" } }
   );

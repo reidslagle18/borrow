@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -66,7 +67,15 @@ export async function PATCH(request: Request, ctx: Ctx) {
   if (!b.name?.trim()) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }
-  const flag = b.flag === "vip" || b.flag === "problem" ? b.flag : null;
+  // Flags are admin-only. Staff may edit a customer's contact info/notes, but the
+  // flag is preserved as-is for them (never cleared or changed).
+  let flag: string | null;
+  if (await requireAdmin()) {
+    flag = b.flag === "vip" || b.flag === "problem" ? b.flag : null;
+  } else {
+    const cur = await sql`SELECT flag FROM customers WHERE id = ${id}`;
+    flag = cur[0]?.flag ?? null;
+  }
   const rows = await sql`
     UPDATE customers SET
       name = ${b.name.trim()},

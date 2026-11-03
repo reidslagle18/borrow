@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/AppShell";
 import { Item, Rental } from "@/lib/types";
 import { todayISO, fmtShort, dateOnly } from "@/lib/dates";
+import { useMe } from "@/lib/useMe";
 
 const inputCls =
   "w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-[15px] outline-none focus:border-ink/40";
@@ -42,6 +43,8 @@ function CheckInModal({
   onClose: () => void;
   onDone: (updated: Rental) => void;
 }) {
+  const { me } = useMe();
+  const isAdmin = me?.role === "admin";
   const due = dateOnly(rental.due_date);
   const [returnedDate, setReturnedDate] = useState(todayISO());
   const [issue, setIssue] = useState<"none" | "repair" | "loss">("none");
@@ -158,36 +161,42 @@ function CheckInModal({
                 <p className="text-[15px]">
                   {late} day{late === 1 ? "" : "s"} late · $15/day
                 </p>
-                <div className="mt-2 flex items-center gap-2">
-                  <label className="text-xs uppercase tracking-[0.15em] text-ink/50">
-                    Late fee $
-                  </label>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    className="w-24 rounded-xl border border-ink/15 bg-white px-3 py-1.5 text-[15px] outline-none"
-                    value={fee}
-                    onChange={(e) => setFeeOverride(e.target.value)}
-                  />
-                  {Number(fee) !== autoFee && (
-                    <button
-                      type="button"
-                      onClick={() => setFeeOverride(null)}
-                      className="text-xs text-ink/50 underline underline-offset-2"
-                    >
-                      reset to ${autoFee}
-                    </button>
-                  )}
-                  {Number(fee) > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setFeeOverride("0")}
-                      className="ml-auto text-xs text-ink/50 underline underline-offset-2"
-                    >
-                      waive
-                    </button>
-                  )}
-                </div>
+                {isAdmin ? (
+                  <div className="mt-2 flex items-center gap-2">
+                    <label className="text-xs uppercase tracking-[0.15em] text-ink/50">
+                      Late fee $
+                    </label>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      className="w-24 rounded-xl border border-ink/15 bg-white px-3 py-1.5 text-[15px] outline-none"
+                      value={fee}
+                      onChange={(e) => setFeeOverride(e.target.value)}
+                    />
+                    {Number(fee) !== autoFee && (
+                      <button
+                        type="button"
+                        onClick={() => setFeeOverride(null)}
+                        className="text-xs text-ink/50 underline underline-offset-2"
+                      >
+                        reset to ${autoFee}
+                      </button>
+                    )}
+                    {Number(fee) > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setFeeOverride("0")}
+                        className="ml-auto text-xs text-ink/50 underline underline-offset-2"
+                      >
+                        waive
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-[13px] text-ink/60">
+                    Late fee ${autoFee}
+                  </p>
+                )}
               </>
             ) : (
               <p className="text-[15px]">On time — no late fee.</p>

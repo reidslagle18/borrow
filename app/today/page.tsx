@@ -36,12 +36,27 @@ type PullReservation = {
   days_remaining: number;
   pulled: boolean;
 };
+type ConsignorPull = {
+  request_id: number;
+  item_id: string;
+  barcode: string | null;
+  brand: string;
+  size: string;
+  photo_url: string | null;
+  consignor_name: string;
+  hold_start: string;
+  hold_end: string | null;
+  location: string | null;
+  note: string | null;
+  pulled: boolean;
+};
 type Today = {
   pickups: Rental[];
   returns_today: Rental[];
   overdue: Rental[];
   dropoffs: Dropoff[];
   pull_reservations: PullReservation[];
+  consignor_pulls: ConsignorPull[];
 };
 type Notifications = {
   count: number;
@@ -93,7 +108,7 @@ export default function TodayPage() {
   const [pullBusy, setPullBusy] = useState<number | null>(null);
 
   const loadToday = useCallback(async () => {
-    const empty: Today = { pickups: [], returns_today: [], overdue: [], dropoffs: [], pull_reservations: [] };
+    const empty: Today = { pickups: [], returns_today: [], overdue: [], dropoffs: [], pull_reservations: [], consignor_pulls: [] };
     try {
       const r = await fetch("/api/today");
       setData(r.ok ? await r.json() : empty);
@@ -122,6 +137,34 @@ export default function TodayPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: pulled ? "pull" : "unpull" }),
+      });
+      await loadToday();
+    } catch {
+      await loadToday();
+    } finally {
+      setPullBusy(null);
+    }
+  }
+
+  // Mark a consignor hold/retrieval pulled (or undo). Keyed by request_id; we use
+  // a negative key in pullBusy so it never collides with a rental_id.
+  async function markConsignorPulled(requestId: number, pulled: boolean) {
+    setPullBusy(-requestId);
+    setData((d) =>
+      d
+        ? {
+            ...d,
+            consignor_pulls: d.consignor_pulls.map((p) =>
+              p.request_id === requestId ? { ...p, pulled } : p
+            ),
+          }
+        : d
+    );
+    try {
+      await fetch("/api/pull-list", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request_id: requestId, pulled }),
       });
       await loadToday();
     } catch {
@@ -200,11 +243,18 @@ export default function TodayPage() {
   const returns = data?.returns_today ?? [];
   const overdue = data?.overdue ?? [];
   const dropoffs = data?.dropoffs ?? [];
-  // Only pieces that need pulling TODAY (at/past their last safe date), and only
-  // the ones not yet pulled — future "coming up" pulls stay on the Pull List page.
-  const pulls = (data?.pull_reservations ?? []).filter((p) => p.days_remaining <= 0);
-  const toPull = pulls.filter((p) => !p.pulled);
-  const donePulls = pulls.filter((p) => p.pulled);
+  // Pull from racks — two groups:
+  //   (a) Consignor pulls: holds/retrievals that start today or tomorrow.
+  //   (b) Reserved pulls: reserved pieces at/near their Last Safe Rental Date.
+  const reservedPulls = data?.pull_reservations ?? [];
+  const toPullR = reservedPulls.filter((p) => !p.pulled);
+  const donePullsR = reservedPulls.filter((p) => p.pulled);
+  const consignorPulls = data?.consignor_pulls ?? [];
+  const toPullC = consignorPulls.filter((p) => !p.pulled);
+  const donePullsC = consignorPulls.filter((p) => p.pulled);
+  const hasAnyPulls =
+    toPullR.length + donePullsR.length + toPullC.length + donePullsC.length > 0;
+  const toPullCount = toPullR.length + toPullC.length;
   const returnsCount = returns.length + overdue.length;
 
   return (
@@ -268,104 +318,198 @@ export default function TodayPage() {
               {dropoffs.length === 1 ? "" : "s"}
             </p>
 
-            {/* Pull for reservation — pieces at/near their Last Safe Rental Date.
-                Mark each "Pulled" to clear it so only NEW reservations stand out. */}
-            {(toPull.length > 0 || donePulls.length > 0) && (
+            {/* Pull from racks — two groups: consignor pulls (holds/retrievals
+                starting today or tomorrow) and reserved pulls (pieces at/near
+                their Last Safe Rental Date). Tap Pulled to clear each one. */}
+            {hasAnyPulls && (
               <section className="mt-6 rounded-2xl border border-butter-deep/40 bg-butter/25 p-4">
                 <div className="flex items-center justify-between">
                   <h2 className="text-xl font-medium">
-                    Pull for reservation{" "}
-                    <span className="text-ink/40">({toPull.length})</span>
+                    Pull from racks{" "}
+                    <span className="text-ink/40">({toPullCount})</span>
                   </h2>
                   <Link href="/pull-list" className="text-[13px] text-ink/45">
                     Full list →
                   </Link>
                 </div>
                 <p className="mt-0.5 text-[13px] text-ink/55">
-                  Move these into the Reserved holding area, then tap Pulled so only
-                  new ones show up here.
+                  Pull these into the holding area, then tap Pulled to clear them.
                 </p>
-                <div className="mt-2 space-y-1.5">
-                  {toPull.length === 0 ? (
-                    <p className="rounded-xl bg-white/60 p-3 text-[13px] text-ink/45">
-                      All pulled — anything new will show up here.
-                    </p>
-                  ) : (
-                    toPull.map((p) => (
-                      <div
-                        key={p.rental_id}
-                        className="flex items-center gap-3 rounded-xl bg-white/70 p-3"
-                      >
-                        <Link
-                          href={`/inventory/${p.barcode || p.item_id}`}
-                          className="flex min-w-0 flex-1 items-center gap-3"
-                        >
-                          <Thumb url={p.photo_url} brand={p.brand} />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-[15px] font-medium">{p.brand}</p>
-                            <p className="truncate text-[13px] text-ink/55">
-                              Reserved {fmtShort(dateOnly(p.reservation_date))}
-                              {p.customer_name ? ` · ${p.customer_name}` : ""} · safe until{" "}
-                              {fmtShort(dateOnly(p.last_safe_date))}
-                            </p>
-                          </div>
-                        </Link>
-                        <span
-                          className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] ${
-                            p.days_remaining <= 0
-                              ? "bg-blush-deep text-cream"
-                              : "bg-butter-deep/70 text-ink"
-                          }`}
-                        >
-                          {p.days_remaining <= 0
-                            ? "Pull now"
-                            : `${p.days_remaining} day${p.days_remaining === 1 ? "" : "s"} left`}
-                        </span>
-                        <button
-                          onClick={() => markPulled(p.rental_id, true)}
-                          disabled={pullBusy === p.rental_id}
-                          className="shrink-0 rounded-full bg-ink px-3.5 py-2 text-[13px] text-cream disabled:opacity-40"
-                        >
-                          {pullBusy === p.rental_id ? "…" : "Pulled"}
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
 
-                {donePulls.length > 0 && (
-                  <details className="mt-3">
-                    <summary className="cursor-pointer text-[13px] text-ink/45">
-                      Already pulled ({donePulls.length})
-                    </summary>
-                    <div className="mt-2 space-y-1.5">
-                      {donePulls.map((p) => (
-                        <div
-                          key={p.rental_id}
-                          className="flex items-center gap-3 rounded-xl bg-white/40 p-3 text-ink/55"
-                        >
-                          <Thumb url={p.photo_url} brand={p.brand} />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-[15px]">{p.brand}</p>
-                            <p className="truncate text-[13px] text-ink/45">
-                              Reserved {fmtShort(dateOnly(p.reservation_date))}
-                              {p.customer_name ? ` · ${p.customer_name}` : ""}
-                            </p>
-                          </div>
-                          <span className="shrink-0 rounded-full bg-sage px-2.5 py-1 text-[11px] text-ink">
-                            Pulled ✓
-                          </span>
-                          <button
-                            onClick={() => markPulled(p.rental_id, false)}
-                            disabled={pullBusy === p.rental_id}
-                            className="shrink-0 text-[13px] text-ink/45 underline disabled:opacity-40"
+                {/* (a) Consignor pulls */}
+                {(toPullC.length > 0 || donePullsC.length > 0) && (
+                  <div className="mt-3">
+                    <p className="text-[11px] uppercase tracking-[0.15em] text-ink/45">
+                      Consignor pulls
+                    </p>
+                    <div className="mt-1.5 space-y-1.5">
+                      {toPullC.length === 0 ? (
+                        <p className="rounded-xl bg-white/60 p-3 text-[13px] text-ink/45">
+                          All pulled.
+                        </p>
+                      ) : (
+                        toPullC.map((p) => (
+                          <div
+                            key={p.request_id}
+                            className="flex items-center gap-3 rounded-xl bg-white/70 p-3"
                           >
-                            {pullBusy === p.rental_id ? "…" : "Undo"}
-                          </button>
-                        </div>
-                      ))}
+                            <Link
+                              href={`/inventory/${p.barcode || p.item_id}`}
+                              className="flex min-w-0 flex-1 items-center gap-3"
+                            >
+                              <Thumb url={p.photo_url} brand={p.brand} />
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-[15px] font-medium">
+                                  {p.brand}
+                                </p>
+                                <p className="truncate text-[13px] text-ink/55">
+                                  {p.consignor_name} · hold{" "}
+                                  {fmtShort(dateOnly(p.hold_start))}
+                                  {p.hold_end && p.hold_end !== p.hold_start
+                                    ? `–${fmtShort(dateOnly(p.hold_end))}`
+                                    : ""}
+                                  {p.location ? ` · ${p.location}` : ""}
+                                </p>
+                              </div>
+                            </Link>
+                            <button
+                              onClick={() => markConsignorPulled(p.request_id, true)}
+                              disabled={pullBusy === -p.request_id}
+                              className="shrink-0 rounded-full bg-ink px-3.5 py-2 text-[13px] text-cream disabled:opacity-40"
+                            >
+                              {pullBusy === -p.request_id ? "…" : "Pulled"}
+                            </button>
+                          </div>
+                        ))
+                      )}
                     </div>
-                  </details>
+                    {donePullsC.length > 0 && (
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-[13px] text-ink/45">
+                          Already pulled ({donePullsC.length})
+                        </summary>
+                        <div className="mt-2 space-y-1.5">
+                          {donePullsC.map((p) => (
+                            <div
+                              key={p.request_id}
+                              className="flex items-center gap-3 rounded-xl bg-white/40 p-3 text-ink/55"
+                            >
+                              <Thumb url={p.photo_url} brand={p.brand} />
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-[15px]">{p.brand}</p>
+                                <p className="truncate text-[13px] text-ink/45">
+                                  {p.consignor_name} · hold{" "}
+                                  {fmtShort(dateOnly(p.hold_start))}
+                                </p>
+                              </div>
+                              <span className="shrink-0 rounded-full bg-sage px-2.5 py-1 text-[11px] text-ink">
+                                Pulled ✓
+                              </span>
+                              <button
+                                onClick={() => markConsignorPulled(p.request_id, false)}
+                                disabled={pullBusy === -p.request_id}
+                                className="shrink-0 text-[13px] text-ink/45 underline disabled:opacity-40"
+                              >
+                                {pullBusy === -p.request_id ? "…" : "Undo"}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                )}
+
+                {/* (b) Reserved pulls */}
+                {(toPullR.length > 0 || donePullsR.length > 0) && (
+                  <div className="mt-4">
+                    <p className="text-[11px] uppercase tracking-[0.15em] text-ink/45">
+                      Reserved pulls
+                    </p>
+                    <div className="mt-1.5 space-y-1.5">
+                      {toPullR.length === 0 ? (
+                        <p className="rounded-xl bg-white/60 p-3 text-[13px] text-ink/45">
+                          All pulled — anything new will show up here.
+                        </p>
+                      ) : (
+                        toPullR.map((p) => (
+                          <div
+                            key={p.rental_id}
+                            className="flex items-center gap-3 rounded-xl bg-white/70 p-3"
+                          >
+                            <Link
+                              href={`/inventory/${p.barcode || p.item_id}`}
+                              className="flex min-w-0 flex-1 items-center gap-3"
+                            >
+                              <Thumb url={p.photo_url} brand={p.brand} />
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-[15px] font-medium">
+                                  {p.brand}
+                                </p>
+                                <p className="truncate text-[13px] text-ink/55">
+                                  Reserved {fmtShort(dateOnly(p.reservation_date))}
+                                  {p.customer_name ? ` · ${p.customer_name}` : ""} · safe
+                                  until {fmtShort(dateOnly(p.last_safe_date))}
+                                </p>
+                              </div>
+                            </Link>
+                            <span
+                              className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] ${
+                                p.days_remaining <= 0
+                                  ? "bg-blush-deep text-cream"
+                                  : "bg-butter-deep/70 text-ink"
+                              }`}
+                            >
+                              {p.days_remaining <= 0
+                                ? "Pull now"
+                                : `${p.days_remaining} day${p.days_remaining === 1 ? "" : "s"} left`}
+                            </span>
+                            <button
+                              onClick={() => markPulled(p.rental_id, true)}
+                              disabled={pullBusy === p.rental_id}
+                              className="shrink-0 rounded-full bg-ink px-3.5 py-2 text-[13px] text-cream disabled:opacity-40"
+                            >
+                              {pullBusy === p.rental_id ? "…" : "Pulled"}
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    {donePullsR.length > 0 && (
+                      <details className="mt-2">
+                        <summary className="cursor-pointer text-[13px] text-ink/45">
+                          Already pulled ({donePullsR.length})
+                        </summary>
+                        <div className="mt-2 space-y-1.5">
+                          {donePullsR.map((p) => (
+                            <div
+                              key={p.rental_id}
+                              className="flex items-center gap-3 rounded-xl bg-white/40 p-3 text-ink/55"
+                            >
+                              <Thumb url={p.photo_url} brand={p.brand} />
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-[15px]">{p.brand}</p>
+                                <p className="truncate text-[13px] text-ink/45">
+                                  Reserved {fmtShort(dateOnly(p.reservation_date))}
+                                  {p.customer_name ? ` · ${p.customer_name}` : ""}
+                                </p>
+                              </div>
+                              <span className="shrink-0 rounded-full bg-sage px-2.5 py-1 text-[11px] text-ink">
+                                Pulled ✓
+                              </span>
+                              <button
+                                onClick={() => markPulled(p.rental_id, false)}
+                                disabled={pullBusy === p.rental_id}
+                                className="shrink-0 text-[13px] text-ink/45 underline disabled:opacity-40"
+                              >
+                                {pullBusy === p.rental_id ? "…" : "Undo"}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
                 )}
               </section>
             )}

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
+import { requireAdmin, getSession } from "@/lib/auth";
+import { logAudit } from "@/lib/audit";
 import { getProgram } from "@/lib/credits";
 import { replacementDefault, cleanStyleTags, cleanOccasionTags } from "@/lib/types";
 import { linkItemsIntoSet, unlinkFromSet } from "@/lib/sets";
@@ -36,6 +38,51 @@ export async function PATCH(request: Request, ctx: Ctx) {
   await ensureSchema();
   const { id } = await ctx.params;
   const b = await request.json();
+  const session = await getSession(); // actor for the audit log
+
+  // Staff-safe quick update: status + location only (no price/cost/value fields).
+  // The full edit form below is admin-only.
+  if (b.action === "update_fields") {
+    const allowedStatus = [
+      "available",
+      "reserved",
+      "rented",
+      "cleaning",
+      "consignor_hold",
+      "with_consignor",
+      "in_storage",
+      "retired",
+    ];
+    const setStatus =
+      typeof b.status === "string" && allowedStatus.includes(b.status);
+    const setLocation = typeof b.location === "string" || b.location === null;
+    if (!setStatus && !setLocation) {
+      return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
+    }
+    let rows;
+    if (setStatus && setLocation) {
+      rows = await sql`UPDATE items SET status = ${b.status}, location = ${b.location || null}, updated_at = now() WHERE id = ${id} OR barcode = ${id} RETURNING *`;
+    } else if (setStatus) {
+      rows = await sql`UPDATE items SET status = ${b.status}, updated_at = now() WHERE id = ${id} OR barcode = ${id} RETURNING *`;
+    } else {
+      rows = await sql`UPDATE items SET location = ${b.location || null}, updated_at = now() WHERE id = ${id} OR barcode = ${id} RETURNING *`;
+    }
+    if (rows.length === 0)
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    await logAudit(
+      "item_update",
+      {
+        entity: "item",
+        entityId: rows[0].id,
+        detail: {
+          ...(setStatus ? { status: b.status } : {}),
+          ...(setLocation ? { location: b.location || null } : {}),
+        },
+      },
+      session
+    );
+    return NextResponse.json(rows[0]);
+  }
 
   // Apply the "initial clean before listing" charge after the fact — for when
   // the intake checkbox was missed. Deducts the Cleaning & Care Fee from the
@@ -350,6 +397,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
     }
     // Close the open self-hold request now that the piece is back.
     await sql`UPDATE retrieval_requests SET status = 'done', resolved_at = now() WHERE item_id = ${id} AND status = 'open'`;
+    await logAudit("hold_return", { entity: "item", entityId: id, detail: { needs_cleaning: needsCleaning } }, session);
     return NextResponse.json(rows[0]);
   }
 
@@ -420,6 +468,12 @@ export async function PATCH(request: Request, ctx: Ctx) {
     }
     return NextResponse.json({ error: "Unknown approval_action" }, { status: 400 });
   }
+
+  // Everything below is the full edit form — it rewrites price, cost, retail and
+  // replacement values — so it is admin-only. Staff use action:"update_fields"
+  // (status/location) above.
+  if (!(await requireAdmin()))
+    return NextResponse.json({ error: "Admins only" }, { status: 403 });
 
   if (!b.barcode || !b.brand || !b.size || !b.tier || b.rental_price == null) {
     return NextResponse.json(
@@ -523,6 +577,8 @@ export async function PATCH(request: Request, ctx: Ctx) {
 }
 
 export async function DELETE(_req: Request, ctx: Ctx) {
+  if (!(await requireAdmin()))
+    return NextResponse.json({ error: "Admins only" }, { status: 403 });
   await ensureSchema();
   const { id } = await ctx.params;
   const rows = await sql`DELETE FROM items WHERE id = ${id} RETURNING id`;

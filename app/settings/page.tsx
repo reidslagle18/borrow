@@ -3,6 +3,9 @@
 import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
 import { AmbassadorProgram, DEFAULT_PROGRAM, RENTAL_DAYS } from "@/lib/types";
+import { useMe } from "@/lib/useMe";
+import AccountCard from "@/components/AccountCard";
+import StaffManager from "@/components/StaffManager";
 
 const inputCls =
   "w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-[15px] outline-none focus:border-ink/40";
@@ -31,6 +34,8 @@ const DEFAULT_DROPOFF: DropoffConfig = {
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function SettingsPage() {
+  const { me, loading: meLoading } = useMe();
+  const isAdmin = me?.role === "admin"; // effective (admin + view-as ⇒ staff)
   const [program, setProgram] = useState<AmbassadorProgram>(DEFAULT_PROGRAM);
   const [dropoff, setDropoff] = useState<DropoffConfig>(DEFAULT_DROPOFF);
   const [closedDate, setClosedDate] = useState("");
@@ -135,11 +140,37 @@ export default function SettingsPage() {
     }
   }
 
+  // Staff get a limited Settings page — just "My account". All business settings
+  // are admin-only (and the /api/settings PUT is admin-guarded server-side).
+  if (meLoading) {
+    return (
+      <AppShell>
+        <div className="mx-auto max-w-2xl px-5 py-8 md:px-10 md:py-12">
+          <div className="h-64 animate-pulse rounded-2xl bg-ink/5" />
+        </div>
+      </AppShell>
+    );
+  }
+  if (!isAdmin) {
+    return (
+      <AppShell>
+        <div className="mx-auto max-w-2xl px-5 py-8 md:px-10 md:py-12">
+          <h1 className="font-serif text-4xl font-medium md:text-5xl">Settings</h1>
+          <p className="mt-1.5 text-sm text-ink/50">Your account</p>
+          <AccountCard me={me} />
+        </div>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
       <div className="mx-auto max-w-2xl px-5 py-8 md:px-10 md:py-12">
         <h1 className="font-serif text-4xl font-medium md:text-5xl">Settings</h1>
         <p className="mt-1.5 text-sm text-ink/50">Studio configuration</p>
+
+        <AccountCard me={me} />
+        <StaffManager />
 
         {loadError ? (
           <p className="mt-16 text-center text-ink/50">{loadError}</p>
@@ -258,43 +289,11 @@ export default function SettingsPage() {
               </p>
             </section>
 
-            {/* Consignor approval notifications */}
-            <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
-              <h2 className="font-serif text-xl italic text-ink/70">
-                Consignor approval emails
-              </h2>
-              <p className="mt-1 text-[13px] text-ink/50">
-                When you add a consignor&apos;s pieces, they&apos;re emailed
-                automatically to review and approve them. Pieces added within this
-                window are grouped into a single email instead of one per item.
-              </p>
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <div>
-                  <label className={labelCls}>Batch window (minutes)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    className={inputCls}
-                    value={program.approval_batch_window_min}
-                    onChange={(e) =>
-                      setProgram((p) => ({
-                        ...p,
-                        approval_batch_window_min: Math.max(
-                          1,
-                          Math.floor(Number(e.target.value) || 0)
-                        ),
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-              <p className="mt-1.5 text-[12px] text-ink/45">
-                The email goes out once this window passes from the first new
-                piece. Pieces added later start a fresh batch with its own email.
-                Lower this for faster emails; you can always re-send from a
-                consignor&apos;s record.
-              </p>
-            </section>
+            {/* Consignor approval-emails control removed from the interface
+                (Part 1). Approval emails keep sending and grouping pieces into
+                one email using the saved batch-window value
+                (program.approval_batch_window_min), which is preserved in state
+                and re-saved untouched. */}
 
             {/* Underperforming-item pickup + storage windows */}
             <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
@@ -346,31 +345,9 @@ export default function SettingsPage() {
               </p>
             </section>
 
-            {/* Missing-item fees */}
-            <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
-              <h2 className="font-serif text-xl italic text-ink/70">
-                Missing-item fees
-              </h2>
-              <p className="mt-1 text-[13px] text-ink/50">
-                Charged to the renter&apos;s card on file if the hanger
-                isn&apos;t returned. Shown at checkout.
-              </p>
-              <div className="mt-3 max-w-[12rem]">
-                <label className={labelCls}>Missing hanger fee ($)</label>
-                <input
-                  type="number"
-                  min={0}
-                  className={inputCls}
-                  value={program.hanger_fee}
-                  onChange={(e) =>
-                    setProgram((p) => ({
-                      ...p,
-                      hanger_fee: Math.max(0, Math.floor(Number(e.target.value) || 0)),
-                    }))
-                  }
-                />
-              </div>
-            </section>
+            {/* Missing-hanger fee control removed from the interface (Part 1).
+                The fee keeps working on check-in using the saved amount
+                (program.hanger_fee), preserved in state and re-saved untouched. */}
 
             {/* Color swatches — free-text color name → hex for the shop filter */}
             <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">

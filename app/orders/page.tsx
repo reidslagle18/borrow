@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "@/components/AppShell";
 import { fmtShort, dateOnly } from "@/lib/dates";
+import { useMe } from "@/lib/useMe";
 
 type OrderItem = {
   item_id: string;
@@ -76,6 +77,8 @@ type SourceFilter = "all" | "online" | "in_store";
 type StatusFilter = "all" | "reserved" | "active" | "completed" | "cancelled";
 
 export default function OrdersPage() {
+  const { me } = useMe();
+  const isAdmin = me?.role === "admin";
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [confirmId, setConfirmId] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -320,7 +323,7 @@ export default function OrdersPage() {
                     </div>
                   </div>
 
-                  {o.refundable && o.transaction_id != null && (
+                  {isAdmin && o.refundable && o.transaction_id != null && (
                     <div className="mt-3 flex justify-end">
                       {confirmId === o.transaction_id ? (
                         <div className="flex items-center gap-2">

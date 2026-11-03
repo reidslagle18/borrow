@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
+import { requireAdmin, getSession } from "@/lib/auth";
+import { logAudit } from "@/lib/audit";
 import {
   sendConsignorRentedEmail,
   sendBookingConfirmation,
@@ -92,6 +94,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const rental = existing[0];
+  const session = await getSession(); // actor for the audit log
   let cancellation: { outcome: string; amount: number } | null = null;
 
   // Re-send the reservation confirmation email with the rental's CURRENT dates
@@ -138,6 +141,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
   // Lets the Today / Pull List clear what's done so only NEW reservations show.
   if (b.action === "pull") {
     await sql`UPDATE rentals SET pulled_at = now(), updated_at = now() WHERE id = ${id}`;
+    await logAudit("rental_pull", { entity: "rental", entityId: id, detail: { item_id: rental.item_id } }, session);
     return NextResponse.json({ ok: true, pulled: true });
   }
   if (b.action === "unpull") {
@@ -146,6 +150,9 @@ export async function PATCH(request: Request, ctx: Ctx) {
   }
 
   if (b.action === "refund_late_fee") {
+    // Admin-only — refunds are not a staff action.
+    if (!(await requireAdmin()))
+      return NextResponse.json({ error: "Admins only" }, { status: 403 });
     // Manually reverse late fees auto-charged on this rental (any time after the
     // fact). Refunds every collected late-fee charge back to the card, voids any
     // uncollected ones, and zeroes the recorded fee.
@@ -209,6 +216,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
         portalCode: c.portal_code ?? null,
       });
     }
+    await logAudit("rental_pickup", { entity: "rental", entityId: id, detail: { item_id: rental.item_id } }, session);
   } else if (b.action === "return") {
     if (rental.status !== "active") {
       // Safety net: a piece whose pickup was never confirmed is still 'reserved'
@@ -241,6 +249,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
         { status: 400 }
       );
     }
+    await logAudit("rental_return", { entity: "rental", entityId: id, detail: { item_id: rental.item_id, returned_date: returnedDate } }, session);
     // due_date may arrive as a JS Date or a string depending on the driver
     const due = new Date(rental.due_date).toISOString().slice(0, 10);
     // Late fee only accrues on days the studio was OPEN (closed weekdays and

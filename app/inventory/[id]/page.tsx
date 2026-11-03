@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import ItemForm from "@/components/ItemForm";
+import { useMe } from "@/lib/useMe";
 import {
   Item,
   Consignor,
@@ -92,6 +93,51 @@ export default function PieceDetailPage() {
   // Consignor return / temporary-lend actions.
   const [caBusy, setCaBusy] = useState(false);
   const [caErr, setCaErr] = useState("");
+
+  // Role: staff can view + update status/location, but not open the full (price)
+  // edit form or see cost/replacement values.
+  const { me } = useMe();
+  const isAdmin = me?.role === "admin";
+  const [staffEdit, setStaffEdit] = useState(false);
+  const [sfStatus, setSfStatus] = useState<ItemStatus | "">("");
+  const [sfLocation, setSfLocation] = useState("");
+  const [sfBusy, setSfBusy] = useState(false);
+  const [sfErr, setSfErr] = useState("");
+
+  function openStaffEdit() {
+    if (!item) return;
+    setSfStatus(item.status);
+    setSfLocation(item.location ?? "");
+    setSfErr("");
+    setStaffEdit(true);
+  }
+  async function saveStaffFields() {
+    if (!item) return;
+    setSfBusy(true);
+    setSfErr("");
+    try {
+      const res = await fetch(`/api/items/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_fields",
+          status: sfStatus || item.status,
+          location: sfLocation.trim() || null,
+        }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setItem(d);
+        setStaffEdit(false);
+      } else {
+        setSfErr(d.error || "Couldn't update — try again.");
+      }
+    } catch {
+      setSfErr("Couldn't reach the studio — try again.");
+    } finally {
+      setSfBusy(false);
+    }
+  }
 
   // Mark a consignment piece for dry cleaning before listing (deducts the
   // Cleaning & Care Fee from the consignor) — available for a few days after
@@ -329,13 +375,86 @@ export default function PieceDetailPage() {
                   {item.color ? ` · ${item.color}` : ""}
                 </p>
               </div>
-              <button
-                onClick={() => setEditing(true)}
-                className="rounded-full bg-ink px-6 py-3 text-[15px] text-cream transition-transform active:scale-[0.98]"
-              >
-                Edit piece
-              </button>
+              {isAdmin ? (
+                <button
+                  onClick={() => setEditing(true)}
+                  className="rounded-full bg-ink px-6 py-3 text-[15px] text-cream transition-transform active:scale-[0.98]"
+                >
+                  Edit piece
+                </button>
+              ) : (
+                <button
+                  onClick={openStaffEdit}
+                  className="rounded-full border border-ink/20 px-6 py-3 text-[15px] text-ink/70 transition-transform active:scale-[0.98]"
+                >
+                  Update status / location
+                </button>
+              )}
             </div>
+
+            {/* Staff quick-edit: status + location only (no price fields). */}
+            {staffEdit && !isAdmin && item && (
+              <div className="mt-4 rounded-2xl border border-ink/15 bg-white/70 p-4">
+                <p className="text-[14px] font-medium">Update status &amp; location</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1.5 block text-xs uppercase tracking-[0.15em] text-ink/50">
+                      Status
+                    </label>
+                    <select
+                      value={sfStatus}
+                      onChange={(e) => setSfStatus(e.target.value as ItemStatus)}
+                      className="w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-[15px] outline-none focus:border-ink/40"
+                    >
+                      {(
+                        [
+                          "available",
+                          "reserved",
+                          "rented",
+                          "cleaning",
+                          "consignor_hold",
+                          "with_consignor",
+                          "in_storage",
+                          "retired",
+                        ] as ItemStatus[]
+                      ).map((s) => (
+                        <option key={s} value={s}>
+                          {statusLabel(s)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs uppercase tracking-[0.15em] text-ink/50">
+                      Location
+                    </label>
+                    <input
+                      value={sfLocation}
+                      onChange={(e) => setSfLocation(e.target.value)}
+                      placeholder="e.g. Rack 3"
+                      className="w-full rounded-xl border border-ink/15 bg-white px-3.5 py-2.5 text-[15px] outline-none focus:border-ink/40"
+                    />
+                  </div>
+                </div>
+                {sfErr && <p className="mt-2 text-[13px] text-blush-deep">{sfErr}</p>}
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={saveStaffFields}
+                    disabled={sfBusy}
+                    className="rounded-full bg-ink px-5 py-2.5 text-[14px] text-cream disabled:opacity-40"
+                  >
+                    {sfBusy ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    onClick={() => setStaffEdit(false)}
+                    disabled={sfBusy}
+                    className="rounded-full border border-ink/15 px-5 py-2.5 text-[14px] text-ink/60 disabled:opacity-40"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
 
             {buffer > 0 && (
               <p className="mt-3 rounded-xl bg-butter/40 px-4 py-2.5 text-[13px] text-ink/70">
@@ -648,13 +767,15 @@ export default function PieceDetailPage() {
                 <Section title="Pricing">
                   <Field label="Rental price" value={money(item.rental_price)} />
                   <Field label="Retail value" value={money(item.retail_value)} />
-                  <Field
-                    label="Replacement value"
-                    value={
-                      money(item.replacement_value) +
-                      (item.replacement_value_manual ? " · set" : " · auto")
-                    }
-                  />
+                  {isAdmin && (
+                    <Field
+                      label="Replacement value"
+                      value={
+                        money(item.replacement_value) +
+                        (item.replacement_value_manual ? " · set" : " · auto")
+                      }
+                    />
+                  )}
                 </Section>
 
                 <Section title="Ownership & sourcing">
@@ -665,7 +786,9 @@ export default function PieceDetailPage() {
                   {item.ownership === "consignment" && (
                     <Field label="Consignor" value={item.consignor_name} />
                   )}
-                  <Field label="Acquisition cost" value={money(item.purchase_cost)} />
+                  {isAdmin && (
+                    <Field label="Acquisition cost" value={money(item.purchase_cost)} />
+                  )}
                   <Field
                     label="Acquired"
                     value={fmtDate(item.acquisition_date)}

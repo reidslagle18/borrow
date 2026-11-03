@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AppShell from "@/components/AppShell";
+import { useMe } from "@/lib/useMe";
 import { Customer, Rental, RentalStatus } from "@/lib/types";
 import { fmtShort, dateOnly } from "@/lib/dates";
 
@@ -65,6 +66,8 @@ function DetailModal({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const { me } = useMe();
+  const isAdmin = me?.role === "admin";
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState("");
@@ -297,28 +300,33 @@ function DetailModal({
               </div>
             )}
 
-            {/* Flag + spend */}
+            {/* Flag + spend — flag controls are admin-only; staff still see the
+                flag badge in the header above and the lifetime spend here */}
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs uppercase tracking-[0.15em] text-ink/45">
-                Flag:
-              </span>
-              {(["", "vip", "problem"] as const).map((f) => (
-                <button
-                  key={f || "none"}
-                  onClick={() => saveFlag(f)}
-                  className={`rounded-full border px-3.5 py-1.5 text-sm ${
-                    flag === f
-                      ? f === "problem"
-                        ? "border-blush-deep bg-blush"
-                        : f === "vip"
-                          ? "border-butter-deep bg-butter"
-                          : "border-ink bg-ink text-cream"
-                      : "border-ink/15 bg-white text-ink/55"
-                  }`}
-                >
-                  {f === "" ? "none" : f === "vip" ? "VIP" : "problem"}
-                </button>
-              ))}
+              {isAdmin && (
+                <>
+                  <span className="text-xs uppercase tracking-[0.15em] text-ink/45">
+                    Flag:
+                  </span>
+                  {(["", "vip", "problem"] as const).map((f) => (
+                    <button
+                      key={f || "none"}
+                      onClick={() => saveFlag(f)}
+                      className={`rounded-full border px-3.5 py-1.5 text-sm ${
+                        flag === f
+                          ? f === "problem"
+                            ? "border-blush-deep bg-blush"
+                            : f === "vip"
+                              ? "border-butter-deep bg-butter"
+                              : "border-ink bg-ink text-cream"
+                          : "border-ink/15 bg-white text-ink/55"
+                      }`}
+                    >
+                      {f === "" ? "none" : f === "vip" ? "VIP" : "problem"}
+                    </button>
+                  ))}
+                </>
+              )}
               <span className="ml-auto text-sm text-ink/55">
                 {money(detail.spent)} lifetime
               </span>
@@ -338,32 +346,34 @@ function DetailModal({
                 </p>
               )}
 
-              {/* Grant credit */}
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-ink/40">$</span>
+              {/* Grant credit — admin-only (staff can view the balance + log) */}
+              {isAdmin && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-ink/40">$</span>
+                    <input
+                      value={creditAmt}
+                      onChange={(e) => setCreditAmt(e.target.value)}
+                      inputMode="decimal"
+                      placeholder="50"
+                      className="w-24 rounded-full border border-ink/15 bg-white py-2 pl-6 pr-3 text-sm outline-none focus:border-ink/40"
+                    />
+                  </div>
                   <input
-                    value={creditAmt}
-                    onChange={(e) => setCreditAmt(e.target.value)}
-                    inputMode="decimal"
-                    placeholder="50"
-                    className="w-24 rounded-full border border-ink/15 bg-white py-2 pl-6 pr-3 text-sm outline-none focus:border-ink/40"
+                    value={creditNote}
+                    onChange={(e) => setCreditNote(e.target.value)}
+                    placeholder="Reason (e.g. Instagram giveaway winner)"
+                    className="min-w-0 flex-1 rounded-full border border-ink/15 bg-white px-4 py-2 text-sm outline-none focus:border-ink/40"
                   />
+                  <button
+                    onClick={grantCredit}
+                    disabled={granting || !(Number(creditAmt) > 0)}
+                    className="shrink-0 rounded-full bg-ink px-4 py-2 text-sm text-cream disabled:opacity-40"
+                  >
+                    {granting ? "Adding…" : "Grant credit"}
+                  </button>
                 </div>
-                <input
-                  value={creditNote}
-                  onChange={(e) => setCreditNote(e.target.value)}
-                  placeholder="Reason (e.g. Instagram giveaway winner)"
-                  className="min-w-0 flex-1 rounded-full border border-ink/15 bg-white px-4 py-2 text-sm outline-none focus:border-ink/40"
-                />
-                <button
-                  onClick={grantCredit}
-                  disabled={granting || !(Number(creditAmt) > 0)}
-                  className="shrink-0 rounded-full bg-ink px-4 py-2 text-sm text-cream disabled:opacity-40"
-                >
-                  {granting ? "Adding…" : "Grant credit"}
-                </button>
-              </div>
+              )}
 
               {/* Activity log */}
               {detail.credit_entries && detail.credit_entries.length > 0 && (
@@ -459,7 +469,7 @@ function DetailModal({
                         {(r.status === "active" || r.status === "completed") &&
                           (detail.credited_rental_ids.includes(r.id) ? (
                             <span className="text-[11px] text-sage-deep">✓ post credit</span>
-                          ) : (
+                          ) : isAdmin ? (
                             <button
                               onClick={() => grantPostCredit(r.id)}
                               className="rounded-full border border-ink/15 px-2.5 py-1 text-[11px] text-ink/55"
@@ -467,8 +477,8 @@ function DetailModal({
                             >
                               + post credit
                             </button>
-                          ))}
-                        {Number(r.late_fee_refundable) > 0 && (
+                          ) : null)}
+                        {isAdmin && Number(r.late_fee_refundable) > 0 && (
                           <button
                             onClick={() =>
                               refundLateFee(r.id, Number(r.late_fee_refundable))

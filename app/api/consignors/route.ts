@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 import { getStripe } from "@/lib/stripe";
 import { getOrCreateConnectedAccount } from "@/lib/connect";
 import { sendConsignorWelcome } from "@/lib/email";
@@ -30,6 +31,10 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  // Manually adding a consignor record is admin-only (the drop-off flow still
+  // auto-creates consignors for staff via its own endpoints).
+  if (!(await requireAdmin()))
+    return NextResponse.json({ error: "Admins only" }, { status: 403 });
   await ensureSchema();
   const b = await request.json();
   if (!b.name?.trim()) {

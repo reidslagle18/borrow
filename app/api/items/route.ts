@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema, nextItemId } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 import { getProgram } from "@/lib/credits";
 import { replacementDefault, cleanStyleTags, cleanOccasionTags } from "@/lib/types";
 import { linkItemsIntoSet } from "@/lib/sets";
@@ -22,6 +23,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  // Adding a piece sets price/cost/replacement values — admin-only.
+  if (!(await requireAdmin()))
+    return NextResponse.json({ error: "Admins only" }, { status: 403 });
   await ensureSchema();
   const b = await request.json();
 

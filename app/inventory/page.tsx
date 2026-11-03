@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import ItemForm from "@/components/ItemForm";
+import { GlobalSearch } from "@/components/StudioTools";
+import { useMe } from "@/lib/useMe";
 import {
   Item,
   Consignor,
@@ -39,6 +41,8 @@ const SCROLL_KEY = "inventory_scroll";
 const ORDER_KEY = "inventory_order";
 
 export default function InventoryPage() {
+  const { me } = useMe();
+  const isAdmin = me?.role === "admin";
   const [items, setItems] = useState<Item[] | null>(cachedItems);
   const [consignors, setConsignors] = useState<Consignor[]>(cachedConsignors);
   const [loadError, setLoadError] = useState("");
@@ -253,13 +257,20 @@ export default function InventoryPage() {
             >
               {selectMode ? "Done" : "Select · tag"}
             </button>
-            <button
-              onClick={openAdd}
-              className="rounded-full bg-ink px-6 py-3 text-[15px] text-cream transition-transform active:scale-[0.98]"
-            >
-              + Add piece
-            </button>
+            {isAdmin && (
+              <button
+                onClick={openAdd}
+                className="rounded-full bg-ink px-6 py-3 text-[15px] text-cream transition-transform active:scale-[0.98]"
+              >
+                + Add piece
+              </button>
+            )}
           </div>
+        </div>
+
+        {/* Look up a piece — live suggestions, barcode-aware, scan-ready. */}
+        <div className="mt-6">
+          <GlobalSearch variant="inline" />
         </div>
 
         {/* Status chips */}

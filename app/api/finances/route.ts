@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 import { consignorShare } from "@/lib/types";
 import { sumExpenses } from "@/lib/expenses";
 
@@ -136,6 +137,8 @@ function monthStartOf(iso: string): string {
  *   100% BORROW.
  */
 export async function GET(request: Request) {
+  if (!(await requireAdmin()))
+    return NextResponse.json({ error: "Admins only" }, { status: 403 });
   await ensureSchema();
   const { searchParams } = new URL(request.url);
   const weekStart = searchParams.get("week_start");

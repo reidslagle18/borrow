@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
+import { requireAdmin } from "@/lib/auth";
 import { getProgram } from "@/lib/credits";
 import { AmbassadorProgram, DEFAULT_PROGRAM, cleanOccasions } from "@/lib/types";
 import { getDropoffConfig, DEFAULT_DROPOFF, DropoffConfig } from "@/lib/dropoff";
@@ -11,6 +12,8 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  if (!(await requireAdmin()))
+    return NextResponse.json({ error: "Admins only" }, { status: 403 });
   await ensureSchema();
   const b = await request.json();
   const p = (b.program ?? {}) as Partial<AmbassadorProgram>;

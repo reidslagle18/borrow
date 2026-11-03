@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import { fromISO, addDays, toISO, todayISO, fmtShort, fmtWeekday } from "@/lib/dates";
 
@@ -44,12 +45,21 @@ export default function LookupPage() {
   const today = todayISO();
 
   useEffect(() => {
-    inputRef.current?.focus();
+    // Auto-load the piece when arriving from a search suggestion (/lookup?code=…);
+    // otherwise just focus the field, ready for a scan.
+    const code = new URLSearchParams(window.location.search).get("code");
+    if (code) {
+      setBarcode(code);
+      lookup(undefined, code);
+    } else {
+      inputRef.current?.focus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function lookup(e?: React.FormEvent) {
+  async function lookup(e?: React.FormEvent, codeArg?: string) {
     e?.preventDefault();
-    const code = barcode.trim();
+    const code = (codeArg ?? barcode).trim();
     if (!code) return;
     setLoading(true);
     setError("");
@@ -169,7 +179,7 @@ export default function LookupPage() {
                   </div>
                 )}
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="truncate text-lg font-medium">{data.item.name}</p>
                 <p className="text-[13px] text-ink/55">
                   <span className="font-mono">{data.item.barcode}</span> · {data.item.size}
@@ -178,6 +188,12 @@ export default function LookupPage() {
                   {data.bookings.length === 1 ? "" : "s"}
                 </p>
               </div>
+              <Link
+                href={`/inventory/${encodeURIComponent(data.item.barcode || data.item.id)}`}
+                className="shrink-0 rounded-full border border-ink/20 px-4 py-2 text-[13px] text-ink/70 transition-colors hover:border-ink/40"
+              >
+                View full piece record
+              </Link>
             </div>
 
             {/* Legend */}

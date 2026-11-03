@@ -1,68 +1,101 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect } from "react";
 import { GlobalSearch, NotificationsBell } from "@/components/StudioTools";
+import { useMe } from "@/lib/useMe";
 
-type NavItem = { href: string; label: string };
+// One simple, merged menu. Each top-level entry owns a set of routes; related
+// screens (Checkout + Quick Charge, Orders + Returns, Inventory + Look up + Pull
+// list, and the four consignor screens) are reached through the sub-tab strip
+// rendered under the header. Finances is admin-only.
+type Group = {
+  href: string;
+  label: string;
+  match: string[];
+  adminOnly?: boolean;
+  tabs?: { href: string; label: string }[];
+};
 
-// Grouped navigation. Related views live under one heading so the sidebar reads
-// as a few clear areas instead of one long flat list. "Today" is pinned on top
-// as the daily starting point. Consignor Holds, Drop-offs and Storage & Pickups
-// are grouped together under Consignors.
-const NAV_GROUPS: { section: string | null; items: NavItem[] }[] = [
-  { section: null, items: [{ href: "/today", label: "Today" }] },
+const GROUPS: Group[] = [
+  { href: "/today", label: "Today", match: ["/today"] },
   {
-    section: "Storefront",
-    items: [
-      { href: "/inventory", label: "Inventory" },
-      { href: "/recommended", label: "Recommended" },
-      { href: "/hero", label: "Hero photos" },
+    href: "/checkout",
+    label: "Checkout",
+    match: ["/checkout", "/quick-charge"],
+    tabs: [
+      { href: "/checkout", label: "Checkout" },
+      { href: "/quick-charge", label: "Quick Charge" },
     ],
   },
   {
-    section: "Sales",
-    items: [
-      { href: "/checkout", label: "Checkout" },
-      { href: "/quick-charge", label: "Quick Charge" },
-      { href: "/orders", label: "Orders" },
+    href: "/orders",
+    label: "Orders",
+    match: ["/orders", "/returns"],
+    tabs: [
+      { href: "/orders", label: "All orders" },
       { href: "/returns", label: "Returns" },
     ],
   },
   {
-    section: "Reservations",
-    items: [
-      { href: "/calendar", label: "Calendar" },
-      { href: "/lookup", label: "Look up piece" },
-      { href: "/pull-list", label: "Pull List" },
+    href: "/inventory",
+    label: "Inventory",
+    match: ["/inventory", "/lookup", "/pull-list"],
+    tabs: [
+      { href: "/inventory", label: "Inventory" },
+      { href: "/lookup", label: "Look up a piece" },
+      { href: "/pull-list", label: "Pull list" },
     ],
   },
+  { href: "/calendar", label: "Calendar", match: ["/calendar"] },
+  { href: "/customers", label: "Customers", match: ["/customers"] },
   {
-    section: "Consignors",
-    items: [
+    href: "/consignors",
+    label: "Consignors",
+    match: ["/consignors", "/dropoff", "/retrievals", "/pickups"],
+    tabs: [
       { href: "/consignors", label: "Consignors" },
-      { href: "/retrievals", label: "Consignor Holds" },
       { href: "/dropoff", label: "Drop-offs" },
+      { href: "/retrievals", label: "Holds" },
       { href: "/pickups", label: "Storage & Pickups" },
     ],
   },
-  {
-    section: "Business",
-    items: [
-      { href: "/customers", label: "Customers" },
-      { href: "/finances", label: "Finances" },
-      { href: "/settings", label: "Settings" },
-    ],
-  },
+  { href: "/finances", label: "Finances", match: ["/finances"], adminOnly: true },
+  { href: "/settings", label: "Settings", match: ["/settings"] },
 ];
-
-// Flattened order for the mobile top-bar scroller (section headers don't fit a
-// horizontal pill strip).
-const NAV_FLAT: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
+  const router = useRouter();
+  const { me, loading } = useMe();
+
+  // If a staff login was disabled mid-session, /api/me returns null — bounce to
+  // the login screen.
+  useEffect(() => {
+    if (!loading && !me) router.replace("/login");
+  }, [loading, me, router]);
+
+  const isAdminView = me?.role === "admin"; // effective (admin + view-as ⇒ staff)
+  const groups = GROUPS.filter((g) => !g.adminOnly || isAdminView);
+
+  const groupActive = (g: Group) =>
+    g.match.some((m) => pathname === m || pathname.startsWith(m + "/"));
+  const activeGroup = GROUPS.find(groupActive);
+  const tabs = activeGroup?.tabs;
+
+  async function logout() {
+    await fetch("/api/logout", { method: "POST" });
+    window.location.href = "/login";
+  }
+  async function toggleViewAs(on: boolean) {
+    await fetch("/api/viewas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ on }),
+    });
+    window.location.href = "/today";
+  }
 
   return (
     <div className="min-h-screen md:flex">
@@ -79,29 +112,42 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <GlobalSearch variant="sidebar" />
         <NotificationsBell variant="sidebar" />
         <nav className="mt-5 flex flex-col gap-1">
-          {NAV_GROUPS.map((group, gi) => (
-            <div key={group.section ?? "top"} className={gi > 0 ? "mt-3" : ""}>
-              {group.section && (
-                <p className="mb-1 px-4 text-[10px] font-medium uppercase tracking-[0.18em] text-ink/35">
-                  {group.section}
-                </p>
-              )}
-              {group.items.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`block rounded-full px-4 py-2.5 text-[15px] transition-colors ${
-                    isActive(item.href)
-                      ? "bg-ink text-cream"
-                      : "text-ink/70 hover:bg-ink/5"
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              ))}
-            </div>
+          {groups.map((g) => (
+            <Link
+              key={g.href}
+              href={g.href}
+              className={`block rounded-full px-4 py-2.5 text-[15px] transition-colors ${
+                groupActive(g) ? "bg-ink text-cream" : "text-ink/70 hover:bg-ink/5"
+              }`}
+            >
+              {g.label}
+            </Link>
           ))}
         </nav>
+
+        {/* Account footer */}
+        <div className="mt-auto pt-6">
+          {me && (
+            <p className="px-4 text-[11px] uppercase tracking-[0.18em] text-ink/35">
+              {me.name}
+              {me.isAdmin ? " · Admin" : " · Staff"}
+            </p>
+          )}
+          {me?.isAdmin && !me.viewAs && (
+            <button
+              onClick={() => toggleViewAs(true)}
+              className="mt-2 block w-full rounded-full border border-ink/15 px-4 py-2 text-left text-[13px] text-ink/60 hover:border-ink/35"
+            >
+              View as staff
+            </button>
+          )}
+          <button
+            onClick={logout}
+            className="mt-2 block w-full rounded-full px-4 py-2 text-left text-[13px] text-ink/50 hover:bg-ink/5"
+          >
+            Sign out
+          </button>
+        </div>
       </aside>
 
       {/* Top bar (mobile / iPad portrait) */}
@@ -116,24 +162,71 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-2">
             <GlobalSearch variant="topbar" />
             <NotificationsBell variant="topbar" />
+            <button
+              onClick={logout}
+              aria-label="Sign out"
+              className="flex h-9 items-center rounded-full border border-ink/15 bg-white px-3 text-[12px] text-ink/60"
+            >
+              Sign out
+            </button>
           </div>
         </div>
         <nav className="flex gap-1.5 overflow-x-auto px-4 pb-3 [scrollbar-width:none]">
-          {NAV_FLAT.map((item) => (
+          {groups.map((g) => (
             <Link
-              key={item.href}
-              href={item.href}
+              key={g.href}
+              href={g.href}
               className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm ${
-                isActive(item.href) ? "bg-ink text-cream" : "bg-ink/5 text-ink/70"
+                groupActive(g) ? "bg-ink text-cream" : "bg-ink/5 text-ink/70"
               }`}
             >
-              {item.label}
+              {g.label}
             </Link>
           ))}
         </nav>
       </div>
 
-      <main className="min-w-0 flex-1">{children}</main>
+      <main className="min-w-0 flex-1">
+        {/* View-as banner */}
+        {me?.viewAs && (
+          <div className="flex items-center justify-between gap-3 bg-ink px-5 py-2 text-[13px] text-cream md:px-10">
+            <span>Previewing the staff view — admin-only areas are hidden.</span>
+            <button
+              onClick={() => toggleViewAs(false)}
+              className="shrink-0 rounded-full bg-cream px-3 py-1 text-[12px] font-medium text-ink"
+            >
+              Exit staff view
+            </button>
+          </div>
+        )}
+
+        {/* Sub-tab strip for merged sections */}
+        {tabs && (
+          <div className="border-b border-ink/10 bg-cream/60">
+            <div className="flex gap-1.5 overflow-x-auto px-5 py-2.5 md:px-10 [scrollbar-width:none]">
+              {tabs.map((t) => {
+                const active =
+                  pathname === t.href || pathname.startsWith(t.href + "/");
+                return (
+                  <Link
+                    key={t.href}
+                    href={t.href}
+                    className={`whitespace-nowrap rounded-full px-3.5 py-1.5 text-[13px] transition-colors ${
+                      active
+                        ? "bg-ink text-cream"
+                        : "bg-white text-ink/60 hover:text-ink"
+                    }`}
+                  >
+                    {t.label}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {children}
+      </main>
     </div>
   );
 }

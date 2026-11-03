@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
+import { logAudit } from "@/lib/audit";
 import { sendReceipt, sendConsignorRentedEmail, ReceiptLine } from "@/lib/email";
 import { consignorShare, salesTax, extraRentalFee, closedPickupDate, nextOpenDate } from "@/lib/types";
 import { getProgram } from "@/lib/credits";
@@ -250,6 +251,18 @@ export async function POST(request: Request) {
       `;
     }
   }
+
+  // Audit: who rang up this checkout.
+  await logAudit("checkout", {
+    entity: "transaction",
+    entityId: tx.id,
+    detail: {
+      piece_count: items.length,
+      total,
+      reserving,
+      item_ids: itemIds,
+    },
+  });
 
   // Log the campaign tag on this order (audit trail).
   if (campaignCode) {
