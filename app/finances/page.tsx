@@ -72,6 +72,7 @@ type Summary = {
   store_credit: number;
   consignor_payouts: number;
   net_take: number;
+  sales_tax: number;
   reserved_prepaid: number;
   net_take_incl_reserved: number;
   everything_paid: number;
@@ -393,6 +394,12 @@ export default function FinancesPage() {
                       <span>Logged expenses</span>
                       <span>−{money(data.summary.expenses_total)}</span>
                     </div>
+                    {data.summary.sales_tax > 0 && (
+                      <div className="mt-1 flex justify-between border-t border-dashed border-ink/10 pt-1 text-ink/55">
+                        <span>Sales tax collected (set aside to remit)</span>
+                        <span>{money(data.summary.sales_tax)}</span>
+                      </div>
+                    )}
                     {data.summary.reserved_prepaid > 0 && (
                       <div className="mt-1 border-t border-dashed border-ink/10 pt-1">
                         <div className="flex justify-between">
@@ -413,7 +420,9 @@ export default function FinancesPage() {
                   <p className="mt-2 text-[12px] text-ink/45">
                     Net Take is what Borrow keeps after paying consignors. Estimated
                     Profit also subtracts logged operating expenses like cleaning,
-                    fees, rent, and marketing. &ldquo;Incl. reservations&rdquo; adds
+                    fees, rent, and marketing. Sales tax collected isn&rsquo;t profit
+                    &mdash; it&rsquo;s held to remit to the state, so set it aside and
+                    keep it out of this number. &ldquo;Incl. reservations&rdquo; adds
                     money already collected for upcoming reservations.
                   </p>
                 </div>

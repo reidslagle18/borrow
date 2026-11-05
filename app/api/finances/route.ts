@@ -19,7 +19,8 @@ async function netTake(from: string, to: string) {
       // Revenue = what you actually made: the e.closet amount on those rentals
       // (they're marked up), the in-store rental_price on everything else.
       sql`SELECT COALESCE(SUM(COALESCE(ecloset_amount, rental_price)),0) AS rental_revenue,
-                 COALESCE(SUM(extra_days_fee),0) AS extra_days
+                 COALESCE(SUM(extra_days_fee),0) AS extra_days,
+                 COALESCE(SUM(sales_tax),0) AS sales_tax
           FROM rentals WHERE status IN ('active','completed')
             AND start_date >= ${from} AND start_date <= ${to}`,
       // Net of refunds: (amount − refunded_amount) so a fully- OR partially-
@@ -74,6 +75,10 @@ async function netTake(from: string, to: string) {
   const byKind: Record<string, number> = {};
   for (const r of chargeAgg) byKind[String(r.kind)] = Number(r.total);
   const rental_revenue = Number(rentalAgg[0].rental_revenue) + Number(rentalAgg[0].extra_days);
+  // Sales tax collected on those rentals — held to remit to the state, never
+  // Borrow income, so it stays OUT of net_take / profit and is surfaced only as
+  // a "set aside to remit" reminder.
+  const sales_tax = Math.round(Number(rentalAgg[0].sales_tax) * 100) / 100;
   const late_fees = byKind.late_fee || 0;
   const damage_replacement = (byKind.repair || 0) + (byKind.replacement || 0);
   const missing_item_fees = (byKind.hanger || 0) + (byKind.garment_bag || 0);
@@ -115,6 +120,7 @@ async function netTake(from: string, to: string) {
     store_credit,
     consignor_payouts,
     net_take,
+    sales_tax,
     reserved_prepaid,
     net_take_incl_reserved,
     everything_paid,
