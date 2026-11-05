@@ -265,6 +265,7 @@ export async function GET(request: Request) {
       SELECT
         COALESCE(SUM(COALESCE(ecloset_amount, rental_price)) FILTER (WHERE status = 'reserved'), 0) AS reserved_rental,
         COALESCE(SUM(COALESCE(ecloset_amount, rental_price)) FILTER (WHERE status IN ('active','completed')), 0) AS rented_rental,
+        COALESCE(SUM(sales_tax), 0) AS sales_tax,
         COUNT(*) FILTER (WHERE status = 'reserved')::int AS reserved_count,
         COUNT(*) FILTER (WHERE status IN ('active','completed'))::int AS rented_count
       FROM rentals
@@ -298,10 +299,15 @@ export async function GET(request: Request) {
   const dFees = dLate + dDamage + dMissing;
   const dRefunds = Number(dayRefundAgg[0].total);
   const dCredit = Number(dayCreditAgg[0].total);
+  // Sales tax collected on orders paid this day — charged on top of the rental
+  // price and already excluded from every total below; surfaced only so the
+  // owner can see what to set aside to remit.
+  const dSalesTax = r2(Number(dayRentalAgg[0].sales_tax));
   const dayPaid = {
     date: dayISO,
     reserved_rental: r2(dResRental),
     rented_rental: r2(dRentRental),
+    sales_tax: dSalesTax,
     reserved_count: Number(dayRentalAgg[0].reserved_count),
     rented_count: Number(dayRentalAgg[0].rented_count),
     late_fees: dLate,

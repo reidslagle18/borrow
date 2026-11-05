@@ -55,6 +55,7 @@ type DayPaid = {
   fees_total: number;
   refunds: number;
   store_credit: number;
+  sales_tax: number;
   reserved_total: number;
   rented_total: number;
   both_total: number;
@@ -562,6 +563,16 @@ export default function FinancesPage() {
                       </span>
                       <span>{money(dayTotal)}</span>
                     </div>
+                    <p className="pt-0.5 text-[11px] text-ink/40">
+                      Sales tax is excluded from this total — it&rsquo;s charged on
+                      top and isn&rsquo;t your earnings.
+                    </p>
+                    {dp.sales_tax > 0 && (
+                      <div className="flex justify-between border-t border-dashed border-ink/10 pt-1 text-[13px] text-ink/50">
+                        <span>Sales tax collected (set aside to remit)</span>
+                        <span>{money(dp.sales_tax)}</span>
+                      </div>
+                    )}
                     {dayFilter === "both" && (dp.reserved_total > 0 || dp.rented_total > 0) && (
                       <div className="flex justify-between pt-0.5 text-[12px] text-ink/45">
                         <span>
