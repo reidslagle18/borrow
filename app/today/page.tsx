@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
-import { fmtShort, dateOnly } from "@/lib/dates";
+import { fmtShort, dateOnly, todayISO } from "@/lib/dates";
 
 type Rental = {
   id: number;
@@ -106,6 +106,8 @@ export default function TodayPage() {
   const [data, setData] = useState<Today | null>(null);
   const [notif, setNotif] = useState<Notifications | null>(null);
   const [pullBusy, setPullBusy] = useState<number | null>(null);
+  // Which rental's pickup/return action is in flight (so its button shows a spinner).
+  const [rowBusy, setRowBusy] = useState<number | null>(null);
 
   const loadToday = useCallback(async () => {
     const empty: Today = { pickups: [], returns_today: [], overdue: [], dropoffs: [], pull_reservations: [], consignor_pulls: [] };
@@ -174,6 +176,62 @@ export default function TodayPage() {
     }
   }
 
+  // Check a reserved piece out as picked up, right from the Today list. Same
+  // action as confirming pickup at checkout (flips reserved → active, marks the
+  // item rented, emails the consignor if it's consigned).
+  async function markPickedUp(r: Rental) {
+    if (
+      !confirm(
+        `Check out "${r.brand}" to ${r.customer_name ?? "this customer"} as picked up?`
+      )
+    )
+      return;
+    setRowBusy(r.id);
+    try {
+      const res = await fetch(`/api/rentals/${r.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "pickup" }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        alert(d.error || "Couldn't mark as picked up.");
+      }
+      await loadToday();
+    } catch {
+      await loadToday();
+    } finally {
+      setRowBusy(null);
+    }
+  }
+
+  // Check a piece back in as returned today — a clean, no-damage check-in. Late
+  // fees still apply automatically on overdue pieces. Damage assessment and fee
+  // waivers live on the Returns page.
+  async function markReturned(r: Rental, overdue?: boolean) {
+    const msg = overdue
+      ? `Check "${r.brand}" in as returned today? It's overdue, so a late fee applies automatically. For damage or to waive the fee, use the Returns page.`
+      : `Check "${r.brand}" in as returned today? For damage, use the Returns page.`;
+    if (!confirm(msg)) return;
+    setRowBusy(r.id);
+    try {
+      const res = await fetch(`/api/rentals/${r.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "return", returned_date: todayISO() }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        alert(d.error || "Couldn't check in.");
+      }
+      await loadToday();
+    } catch {
+      await loadToday();
+    } finally {
+      setRowBusy(null);
+    }
+  }
+
   // "Needs attention" surface, loaded independently so a failure of either feed
   // never blanks the other. On a failed/transient fetch we KEEP the last good
   // value rather than blanking the panel, and we poll so it stays current.
@@ -212,30 +270,60 @@ export default function TodayPage() {
         .map((g) => ({ key: g.key, href: g.href, label: `${g.n} ${g.n === 1 ? g.one : g.many}` }))
     : [];
 
-  function RentalRow({ r, overdue }: { r: Rental; overdue?: boolean }) {
+  function RentalRow({
+    r,
+    overdue,
+    action,
+  }: {
+    r: Rental;
+    overdue?: boolean;
+    action?: "pickup" | "return";
+  }) {
     return (
-      <Link
-        href={`/inventory/${r.barcode || r.item_id}`}
+      <div
         className={`flex items-center gap-3 rounded-2xl p-3 transition-colors hover:bg-white ${
           overdue ? "bg-blush/25" : "bg-white/70"
         }`}
       >
-        <Thumb url={r.photo_url} brand={r.brand} />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[15px]">
-            <span className="font-medium">{r.customer_name ?? "No customer"}</span>{" "}
-            <span className="text-ink/50">· {r.brand}</span>
-          </p>
-          <p className="truncate text-[13px] text-ink/55">
-            {r.barcode || r.item_id} · {r.size}
-          </p>
-        </div>
+        <Link
+          href={`/inventory/${r.barcode || r.item_id}`}
+          className="flex min-w-0 flex-1 items-center gap-3"
+        >
+          <Thumb url={r.photo_url} brand={r.brand} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[15px]">
+              <span className="font-medium">{r.customer_name ?? "No customer"}</span>{" "}
+              <span className="text-ink/50">· {r.brand}</span>
+            </p>
+            <p className="truncate text-[13px] text-ink/55">
+              {r.barcode || r.item_id} · {r.size}
+            </p>
+          </div>
+        </Link>
         {overdue && (
           <span className="shrink-0 rounded-full bg-blush-deep px-2.5 py-1 text-[11px] text-cream">
             overdue
           </span>
         )}
-      </Link>
+        {action === "pickup" && (
+          <button
+            onClick={() => markPickedUp(r)}
+            disabled={rowBusy === r.id}
+            className="shrink-0 rounded-full bg-ink px-3.5 py-2 text-[13px] text-cream disabled:opacity-40"
+          >
+            {rowBusy === r.id ? "…" : "Picked up"}
+          </button>
+        )}
+        {action === "return" && (
+          <button
+            onClick={() => markReturned(r, overdue)}
+            disabled={rowBusy === r.id}
+            className="shrink-0 rounded-full bg-ink px-3.5 py-2 text-[13px] text-cream disabled:opacity-40"
+          >
+            {rowBusy === r.id ? "…" : "Returned"}
+          </button>
+        )}
+      </div>
     );
   }
 
@@ -525,7 +613,7 @@ export default function TodayPage() {
                     No pickups scheduled today.
                   </p>
                 ) : (
-                  pickups.map((r) => <RentalRow key={r.id} r={r} />)
+                  pickups.map((r) => <RentalRow key={r.id} r={r} action="pickup" />)
                 )}
               </div>
             </section>
@@ -538,10 +626,10 @@ export default function TodayPage() {
               </h2>
               <div className="mt-3 space-y-2">
                 {overdue.map((r) => (
-                  <RentalRow key={r.id} r={r} overdue />
+                  <RentalRow key={r.id} r={r} overdue action="return" />
                 ))}
                 {returns.map((r) => (
-                  <RentalRow key={r.id} r={r} />
+                  <RentalRow key={r.id} r={r} action="return" />
                 ))}
                 {returnsCount === 0 && (
                   <p className="rounded-2xl bg-white/70 p-4 text-sm text-ink/45">
