@@ -13,9 +13,10 @@ export async function GET() {
   const lead = lastSafeRentalLeadDays(await getProgram());
 
   const [pickups, returnsToday, overdue, dropoffs, pullReservations, consignorPulls] = await Promise.all([
-    // Pickups: reserved pieces due to go out today OR any earlier day that were
-    // never picked up (late pickups) — so nothing scheduled quietly falls off the
-    // list. `late` flags the ones whose pickup day has already passed.
+    // Pickups: reserved pieces due to go out today OR in the last 14 days that
+    // were never picked up (late pickups) — so a recently-missed pickup still
+    // shows, but months-old abandoned reservations don't clutter the list.
+    // `late` flags the ones whose pickup day has already passed.
     sql`
       SELECT r.id, r.item_id, r.status, r.start_date, r.due_date,
              c.name AS customer_name,
@@ -24,7 +25,9 @@ export async function GET() {
       FROM rentals r
       LEFT JOIN customers c ON c.id = r.customer_id
       JOIN items i ON i.id = r.item_id
-      WHERE r.status = 'reserved' AND r.start_date <= (now() AT TIME ZONE 'America/Chicago')::date
+      WHERE r.status = 'reserved'
+        AND r.start_date <= (now() AT TIME ZONE 'America/Chicago')::date
+        AND r.start_date >= (now() AT TIME ZONE 'America/Chicago')::date - 14
       ORDER BY r.start_date ASC, c.name ASC
     `,
     sql`
