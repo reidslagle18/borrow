@@ -14,6 +14,8 @@ type Rental = {
   photo_url: string | null;
   customer_name: string | null;
   due_date: string;
+  start_date?: string;
+  late?: boolean; // reserved pickup whose scheduled day has already passed
 };
 type Dropoff = {
   id: number;
@@ -273,16 +275,22 @@ export default function TodayPage() {
   function RentalRow({
     r,
     overdue,
+    highlight,
+    badgeLabel,
     action,
   }: {
     r: Rental;
     overdue?: boolean;
+    highlight?: boolean; // blush background for attention (e.g. a late pickup)
+    badgeLabel?: string; // small pill text; defaults to "overdue" when overdue
     action?: "pickup" | "return";
   }) {
+    const hot = overdue || highlight;
+    const badge = badgeLabel ?? (overdue ? "overdue" : null);
     return (
       <div
         className={`flex items-center gap-3 rounded-2xl p-3 transition-colors hover:bg-white ${
-          overdue ? "bg-blush/25" : "bg-white/70"
+          hot ? "bg-blush/25" : "bg-white/70"
         }`}
       >
         <Link
@@ -300,9 +308,9 @@ export default function TodayPage() {
             </p>
           </div>
         </Link>
-        {overdue && (
+        {badge && (
           <span className="shrink-0 rounded-full bg-blush-deep px-2.5 py-1 text-[11px] text-cream">
-            overdue
+            {badge}
           </span>
         )}
         {action === "pickup" && (
@@ -328,6 +336,7 @@ export default function TodayPage() {
   }
 
   const pickups = data?.pickups ?? [];
+  const latePickups = pickups.filter((r) => r.late).length;
   const returns = data?.returns_today ?? [];
   const overdue = data?.overdue ?? [];
   const dropoffs = data?.dropoffs ?? [];
@@ -606,6 +615,9 @@ export default function TodayPage() {
             <section className="mt-8">
               <h2 className="text-2xl font-medium">
                 Pickups today <span className="text-ink/40">({pickups.length})</span>
+                {latePickups > 0 && (
+                  <span className="text-blush-deep"> · {latePickups} late</span>
+                )}
               </h2>
               <div className="mt-3 space-y-2">
                 {pickups.length === 0 ? (
@@ -613,7 +625,15 @@ export default function TodayPage() {
                     No pickups scheduled today.
                   </p>
                 ) : (
-                  pickups.map((r) => <RentalRow key={r.id} r={r} action="pickup" />)
+                  pickups.map((r) => (
+                    <RentalRow
+                      key={r.id}
+                      r={r}
+                      action="pickup"
+                      highlight={r.late}
+                      badgeLabel={r.late ? "late" : undefined}
+                    />
+                  ))
                 )}
               </div>
             </section>
