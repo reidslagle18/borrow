@@ -1191,3 +1191,60 @@ export async function sendTimeOffRequestAlert(d: {
     `)
   );
 }
+
+// --- Time clock notifications (email, best-effort) --------------------------
+
+/** Owner alert: a staffer hasn't clocked in ~10 min after their shift start. */
+export async function sendNoClockInAlert(d: { to: string; memberName: string; shiftLabel: string }) {
+  return sendEmail(
+    d.to,
+    `${d.memberName} hasn't clocked in`,
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Time clock</p>
+      <p style="font-size:16px;"><strong>${d.memberName}</strong> is scheduled ${d.shiftLabel} but hasn't clocked in yet.</p>
+      <p style="${pSans}">You may want to check in with them.</p>
+    `)
+  );
+}
+
+/** Staff nudge at shift start to clock in. */
+export async function sendClockInReminder(d: { to: string; name: string; shiftLabel: string }) {
+  const first = d.name.split(" ")[0] || "there";
+  return sendEmail(
+    d.to,
+    `Time to clock in (${d.shiftLabel})`,
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Shift starting</p>
+      <p style="font-size:16px;">Hi ${first}, your shift (${d.shiftLabel}) is starting — don't forget to tap <strong>Clock In</strong> on the studio iPad.</p>
+    `)
+  );
+}
+
+/** Owner alert: a manual time request or missed-clock-out needs approval. */
+export async function sendTimeApprovalAlert(d: { to: string; memberName: string; summary: string }) {
+  return sendEmail(
+    d.to,
+    `Time entry needs your approval — ${d.memberName}`,
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Time clock</p>
+      <p style="font-size:16px;"><strong>${d.memberName}</strong> submitted a time entry that needs approval:</p>
+      <p style="${pSans}">${d.summary}</p>
+      ${btn(`${STUDIO_URL}/team/timesheets`, "Review timesheets")}
+    `)
+  );
+}
+
+/** Staff notice: the owner approved or edited one of their time entries. */
+export async function sendTimeEntryDecision(d: { to: string; name: string; summary: string }) {
+  const first = d.name.split(" ")[0] || "there";
+  return sendEmail(
+    d.to,
+    `Update to your time entry`,
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Time clock</p>
+      <p style="font-size:16px;">Hi ${first}, there's an update to one of your time entries:</p>
+      <p style="${pSans}">${d.summary}</p>
+      ${btn(`${STUDIO_URL}/my-shifts`, "View my timesheet")}
+    `)
+  );
+}

@@ -944,6 +944,106 @@ async function createSchema(): Promise<void> {
     ON team_notifications (team_member_id, read_at)`;
   await sql`CREATE INDEX IF NOT EXISTS team_notifications_admin
     ON team_notifications (to_admin, read_at) WHERE to_admin`;
+
+  // ---- Time clock & timesheets --------------------------------------------
+  // Hard rule: time records are NEVER hard-deleted — they're archived
+  // (archived_at) and every change is written to time_entry_audit with
+  // before/after. Timestamps are stored EXACT (timestamptz); no rounding, no
+  // auto break deduction, no auto clock-out that discards time.
+
+  // Registered devices allowed to clock (e.g. the store iPad). A one-time
+  // setup_code is generated in admin and entered on the device once; that mints
+  // a long-lived device token stored in a cookie on that device.
+  await sql`
+    CREATE TABLE IF NOT EXISTS clock_devices (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      setup_code TEXT,
+      code_expires_at TIMESTAMPTZ,
+      token TEXT,
+      registered_at TIMESTAMPTZ,
+      active BOOLEAN NOT NULL DEFAULT true,
+      last_seen_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS clock_devices_token_key
+    ON clock_devices (token) WHERE token IS NOT NULL`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS clock_devices_code_key
+    ON clock_devices (setup_code) WHERE setup_code IS NOT NULL`;
+
+  // One punch pair per row. clock_out NULL = still clocked in. status lifecycle:
+  // open → completed (clocked out, awaiting review) → approved; manual requests
+  // and missed-clock-out resolutions enter as pending_approval.
+  await sql`
+    CREATE TABLE IF NOT EXISTS time_entries (
+      id SERIAL PRIMARY KEY,
+      team_member_id INT NOT NULL REFERENCES team_members(id),
+      clock_in TIMESTAMPTZ NOT NULL,
+      clock_out TIMESTAMPTZ,
+      source TEXT NOT NULL DEFAULT 'clock' CHECK (source IN ('clock','manual')),
+      device_id INT REFERENCES clock_devices(id) ON DELETE SET NULL,
+      shift_id INT REFERENCES shifts(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'open'
+        CHECK (status IN ('open','completed','pending_approval','approved')),
+      missed_clockout BOOLEAN NOT NULL DEFAULT false,
+      early_arrival BOOLEAN NOT NULL DEFAULT false,
+      late_clockout BOOLEAN NOT NULL DEFAULT false,
+      noclockin_alerted BOOLEAN NOT NULL DEFAULT false,
+      clockin_reminded BOOLEAN NOT NULL DEFAULT false,
+      employee_flagged BOOLEAN NOT NULL DEFAULT false,
+      employee_flag_note TEXT,
+      note TEXT,
+      approved_by TEXT,
+      approved_at TIMESTAMPTZ,
+      archived_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS time_entries_member ON time_entries (team_member_id, clock_in)`;
+  await sql`CREATE INDEX IF NOT EXISTS time_entries_status ON time_entries (status) WHERE archived_at IS NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS time_entries_open ON time_entries (team_member_id) WHERE clock_out IS NULL AND archived_at IS NULL`;
+
+  // Immutable audit trail for every time-entry change (who/when/reason +
+  // before/after snapshot). Visible to the affected employee.
+  await sql`
+    CREATE TABLE IF NOT EXISTS time_entry_audit (
+      id SERIAL PRIMARY KEY,
+      time_entry_id INT NOT NULL REFERENCES time_entries(id),
+      actor_id INT,
+      actor_name TEXT NOT NULL,
+      actor_role TEXT NOT NULL,
+      action TEXT NOT NULL,
+      reason TEXT,
+      before JSONB,
+      after JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS time_entry_audit_entry ON time_entry_audit (time_entry_id, created_at)`;
+
+  // Closed pay periods. A closure row (keyed by the period's start date) locks
+  // that period; only the owner can change entries in it, with a reason.
+  await sql`
+    CREATE TABLE IF NOT EXISTS pay_period_closures (
+      period_start DATE PRIMARY KEY,
+      period_end DATE NOT NULL,
+      closed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      closed_by TEXT,
+      reopened_at TIMESTAMPTZ
+    )
+  `;
+
+  // Admin-only hourly rate per person (for the labor ESTIMATE only; never sent
+  // to staff, never used for payroll/tax). Additive column on team_members.
+  await sql`ALTER TABLE team_members ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC`;
+
+  // Clock-alert bookkeeping on scheduled shifts (so the cron fires each once):
+  // clockin_reminded = we nudged the staffer at shift start; noclockin_alerted =
+  // we told the owner nobody clocked in 10 min after start.
+  await sql`ALTER TABLE shifts ADD COLUMN IF NOT EXISTS clockin_reminded BOOLEAN NOT NULL DEFAULT false`;
+  await sql`ALTER TABLE shifts ADD COLUMN IF NOT EXISTS noclockin_alerted BOOLEAN NOT NULL DEFAULT false`;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */

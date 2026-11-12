@@ -38,6 +38,8 @@ export async function PATCH(request: Request, { params }: Ctx) {
     await sql`UPDATE team_members SET max_shifts_per_week = ${b.max_shifts_per_week ?? null}, updated_at = now() WHERE id = ${mid}`;
   if ("notes" in b)
     await sql`UPDATE team_members SET notes = ${b.notes || null}, updated_at = now() WHERE id = ${mid}`;
+  if ("hourly_rate" in b)
+    await sql`UPDATE team_members SET hourly_rate = ${b.hourly_rate === "" || b.hourly_rate == null ? null : Number(b.hourly_rate)}, updated_at = now() WHERE id = ${mid}`;
   if ("sms_opt_in" in b)
     await sql`UPDATE team_members SET sms_opt_in = ${!!b.sms_opt_in}, updated_at = now() WHERE id = ${mid}`;
   if ("staff_user_id" in b && (typeof b.staff_user_id === "number" || b.staff_user_id === null))
@@ -63,7 +65,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
     SELECT tm.id, tm.staff_user_id, tm.name, tm.phone, tm.email,
            to_char(tm.start_date, 'YYYY-MM-DD') AS start_date,
            tm.active, tm.emergency_name, tm.emergency_phone,
-           tm.max_shifts_per_week, tm.onboarding, tm.sms_opt_in, tm.notes, tm.ical_token
+           tm.max_shifts_per_week, tm.onboarding, tm.sms_opt_in, tm.notes, tm.hourly_rate, tm.ical_token
     FROM team_members tm WHERE tm.id = ${mid}
   `;
   await logAudit("team_member_update", { entity: "team_member", entityId: mid }, admin);

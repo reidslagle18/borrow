@@ -23,7 +23,17 @@ type Group = {
 
 const GROUPS: Group[] = [
   { href: "/today", label: "Today", match: ["/today"] },
-  { href: "/my-shifts", label: "My Shifts", match: ["/my-shifts"], staffOnly: true },
+  { href: "/clock", label: "Clock", match: ["/clock"], staffOnly: true },
+  {
+    href: "/my-shifts",
+    label: "My Shifts",
+    match: ["/my-shifts", "/my-timesheet"],
+    staffOnly: true,
+    tabs: [
+      { href: "/my-shifts", label: "My Shifts" },
+      { href: "/my-timesheet", label: "My Timesheet" },
+    ],
+  },
   {
     href: "/checkout",
     label: "Checkout",
@@ -74,7 +84,10 @@ const GROUPS: Group[] = [
     tabs: [
       { href: "/team", label: "Members" },
       { href: "/team/schedule", label: "Schedule" },
+      { href: "/team/timesheets", label: "Timesheets" },
+      { href: "/team/hours-report", label: "Hours" },
       { href: "/team/time-off", label: "Time off" },
+      { href: "/team/devices", label: "Devices" },
       { href: "/team/settings", label: "Settings" },
     ],
   },

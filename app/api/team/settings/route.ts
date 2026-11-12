@@ -19,12 +19,21 @@ export async function PUT(request: Request) {
   // SMS can only actually turn on once the sending number is approved — enforce
   // that invariant server-side so it can't be toggled on prematurely.
   const sms_from_approved = !!b.sms_from_approved;
+  const cur = await getTeamSettings();
+  const freq = ["weekly", "biweekly", "semimonthly"].includes(b.pay_period_frequency)
+    ? b.pay_period_frequency
+    : cur.pay_period_frequency;
   const next: TeamSettings = {
     ...DEFAULT_TEAM_SETTINGS,
-    ...(await getTeamSettings()),
+    ...cur,
     sms_from_approved,
     sms_enabled: sms_from_approved ? !!b.sms_enabled : false,
-    owner_sms: typeof b.owner_sms === "string" ? b.owner_sms : (await getTeamSettings()).owner_sms,
+    owner_sms: typeof b.owner_sms === "string" ? b.owner_sms : cur.owner_sms,
+    pay_period_frequency: freq,
+    pay_period_anchor:
+      typeof b.pay_period_anchor === "string" && b.pay_period_anchor
+        ? b.pay_period_anchor.slice(0, 10)
+        : cur.pay_period_anchor,
   };
   await saveTeamSettings(next);
   await logAudit("team_settings_save", { entity: "team_settings", detail: { sms_enabled: next.sms_enabled } }, admin);

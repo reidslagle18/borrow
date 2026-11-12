@@ -59,6 +59,8 @@ export interface TeamSettings {
   owner_sms: string; // owner's mobile for SMS (not sensitive)
   default_start: string;
   default_end: string;
+  pay_period_frequency: "weekly" | "biweekly" | "semimonthly";
+  pay_period_anchor: string; // YYYY-MM-DD reference period start (weekly/biweekly)
 }
 
 export const DEFAULT_TEAM_SETTINGS: TeamSettings = {
@@ -67,6 +69,8 @@ export const DEFAULT_TEAM_SETTINGS: TeamSettings = {
   owner_sms: "",
   default_start: DEFAULT_START,
   default_end: DEFAULT_END,
+  pay_period_frequency: "biweekly",
+  pay_period_anchor: "2026-01-05",
 };
 
 export async function getTeamSettings(): Promise<TeamSettings> {

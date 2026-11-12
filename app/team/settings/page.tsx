@@ -15,6 +15,8 @@ type TeamSettings = {
   owner_sms: string;
   default_start: string;
   default_end: string;
+  pay_period_frequency: "weekly" | "biweekly" | "semimonthly";
+  pay_period_anchor: string;
 };
 
 export default function TeamSettingsPage() {
@@ -52,6 +54,8 @@ export default function TeamSettingsPage() {
           sms_enabled: settings.sms_enabled,
           sms_from_approved: settings.sms_from_approved,
           owner_sms: settings.owner_sms,
+          pay_period_frequency: settings.pay_period_frequency,
+          pay_period_anchor: settings.pay_period_anchor || null,
         }),
       });
       if (!res.ok) {
@@ -204,6 +208,75 @@ export default function TeamSettingsPage() {
               <p className="mt-2 text-[15px] text-ink/70">
                 Default shift: {prettyRange(settings.default_start, settings.default_end)}
               </p>
+            </section>
+
+            <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
+              <h2 className="font-serif text-xl italic text-ink/70">Pay period</h2>
+              <p className="mt-1 text-[13px] text-ink/50">
+                How timesheets and the hours report are grouped for payroll.
+              </p>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className={labelCls}>Frequency</label>
+                  <select
+                    className={inputCls}
+                    value={settings.pay_period_frequency}
+                    onChange={(e) =>
+                      setSettings((s) =>
+                        s
+                          ? {
+                              ...s,
+                              pay_period_frequency: e.target
+                                .value as TeamSettings["pay_period_frequency"],
+                            }
+                          : s
+                      )
+                    }
+                  >
+                    <option value="weekly">Weekly</option>
+                    <option value="biweekly">Bi-weekly</option>
+                    <option value="semimonthly">Semi-monthly</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>Anchor date</label>
+                  <input
+                    type="date"
+                    className={inputCls}
+                    value={settings.pay_period_anchor?.slice(0, 10) ?? ""}
+                    onChange={(e) =>
+                      setSettings((s) =>
+                        s ? { ...s, pay_period_anchor: e.target.value } : s
+                      )
+                    }
+                  />
+                  <p className="mt-1 text-[12px] text-ink/45">
+                    First day of a pay period — used for weekly/biweekly.
+                  </p>
+                </div>
+              </div>
+
+              {settings.pay_period_frequency === "semimonthly" && (
+                <p className="mt-3 text-[12px] text-ink/45">
+                  Semi-monthly uses the 1st–15th and 16th–end of month (anchor
+                  ignored).
+                </p>
+              )}
+
+              <div className="mt-4 flex items-center gap-3">
+                <button
+                  onClick={save}
+                  disabled={saving}
+                  className="rounded-full bg-ink px-5 py-2.5 text-[14px] text-cream disabled:opacity-40"
+                >
+                  {saving ? "Saving…" : "Save settings"}
+                </button>
+                {savedAt && <span className="text-sm text-sage-deep">Saved ✓</span>}
+                {saveError && (
+                  <span className="text-sm text-blush-deep">{saveError}</span>
+                )}
+              </div>
             </section>
           </>
         )}

@@ -14,7 +14,7 @@ export async function GET() {
     SELECT tm.id, tm.staff_user_id, tm.name, tm.phone, tm.email,
            to_char(tm.start_date, 'YYYY-MM-DD') AS start_date,
            tm.active, tm.emergency_name, tm.emergency_phone,
-           tm.max_shifts_per_week, tm.onboarding, tm.sms_opt_in, tm.notes,
+           tm.max_shifts_per_week, tm.onboarding, tm.sms_opt_in, tm.notes, tm.hourly_rate,
            su.username AS login_username, su.active AS login_active
     FROM team_members tm
     LEFT JOIN staff_users su ON su.id = tm.staff_user_id

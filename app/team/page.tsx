@@ -26,6 +26,7 @@ type Member = {
   notes: string | null;
   login_username: string | null;
   login_active: boolean | null;
+  hourly_rate: number | null;
 };
 
 type NewMember = {
@@ -309,6 +310,7 @@ function MemberCard({ member, onChange }: { member: Member; onChange: () => void
     emergency_name: member.emergency_name ?? "",
     emergency_phone: member.emergency_phone ?? "",
     notes: member.notes ?? "",
+    hourly_rate: member.hourly_rate != null ? String(member.hourly_rate) : "",
   });
 
   async function patch(body: Record<string, unknown>) {
@@ -360,6 +362,10 @@ function MemberCard({ member, onChange }: { member: Member; onChange: () => void
       emergency_name: form.emergency_name.trim() || null,
       emergency_phone: form.emergency_phone.trim() || null,
       notes: form.notes.trim() || null,
+      hourly_rate:
+        form.hourly_rate.trim() === ""
+          ? null
+          : Math.max(0, Number(form.hourly_rate) || 0),
     });
     if (ok) setEditing(false);
   }
@@ -494,6 +500,21 @@ function MemberCard({ member, onChange }: { member: Member; onChange: () => void
                   setForm((f) => ({ ...f, max_shifts_per_week: e.target.value }))
                 }
               />
+            </div>
+            <div>
+              <label className={labelCls}>Hourly rate (for labor estimate)</label>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                className={inputCls}
+                value={form.hourly_rate}
+                onChange={(e) => setForm((f) => ({ ...f, hourly_rate: e.target.value }))}
+              />
+              <p className="mt-1 text-[12px] text-ink/45">
+                Admin only — never shown to staff. Used only for the labor-cost
+                estimate, not payroll.
+              </p>
             </div>
             <div>
               <label className={labelCls}>Emergency contact name</label>
