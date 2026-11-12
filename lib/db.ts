@@ -808,6 +808,142 @@ async function createSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS audit_log_created ON audit_log (created_at DESC)`;
   await sql`CREATE INDEX IF NOT EXISTS audit_log_entity ON audit_log (entity, entity_id)`;
+
+  // ---- Team / front-desk scheduling ---------------------------------------
+  // A team_member is the HR/scheduling record for a front-desk person. It may
+  // (eventually) be linked to a staff_users login row via staff_user_id; the
+  // "Staff login created" onboarding step is what connects them. We deliberately
+  // store ONLY scheduling/contact data here — never SSNs, bank details, ID
+  // documents, or tax forms.
+  await sql`
+    CREATE TABLE IF NOT EXISTS team_members (
+      id SERIAL PRIMARY KEY,
+      staff_user_id INT REFERENCES staff_users(id) ON DELETE SET NULL,
+      name TEXT NOT NULL,
+      phone TEXT,
+      email TEXT,
+      start_date DATE,
+      active BOOLEAN NOT NULL DEFAULT true,
+      emergency_name TEXT,
+      emergency_phone TEXT,
+      max_shifts_per_week INT,
+      onboarding JSONB NOT NULL DEFAULT '{}'::jsonb,
+      sms_opt_in BOOLEAN NOT NULL DEFAULT false,
+      ical_token TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS team_members_ical_token_key
+    ON team_members (ical_token) WHERE ical_token IS NOT NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS team_members_staff_user ON team_members (staff_user_id)`;
+
+  // Publish state is tracked per week (Monday date). Staff only ever see weeks
+  // whose status is 'published'; drafts are admin-only.
+  await sql`
+    CREATE TABLE IF NOT EXISTS schedule_weeks (
+      week_start DATE PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published')),
+      published_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+
+  // One shift per calendar day (Mon–Sat). team_member_id NULL = unassigned
+  // (renders red in the scheduler). Times are 'HH:MM' 24h strings.
+  await sql`
+    CREATE TABLE IF NOT EXISTS shifts (
+      id SERIAL PRIMARY KEY,
+      shift_date DATE NOT NULL,
+      start_time TEXT NOT NULL DEFAULT '11:55',
+      end_time TEXT NOT NULL DEFAULT '16:55',
+      team_member_id INT REFERENCES team_members(id) ON DELETE SET NULL,
+      is_training BOOLEAN NOT NULL DEFAULT false,
+      note TEXT,
+      reminder_sent BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS shifts_date_key ON shifts (shift_date)`;
+  await sql`CREATE INDEX IF NOT EXISTS shifts_member ON shifts (team_member_id)`;
+
+  // Recurring weekly availability: one row per (member, weekday). weekday is
+  // 0=Sun … 6=Sat (matches JS getUTCDay / isClosedDay convention).
+  await sql`
+    CREATE TABLE IF NOT EXISTS availability (
+      id SERIAL PRIMARY KEY,
+      team_member_id INT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+      weekday INT NOT NULL CHECK (weekday BETWEEN 0 AND 6),
+      available BOOLEAN NOT NULL DEFAULT true
+    )
+  `;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS availability_member_weekday
+    ON availability (team_member_id, weekday)`;
+
+  // One-off unavailable dates (staff "I can't work this specific day").
+  await sql`
+    CREATE TABLE IF NOT EXISTS unavailable_dates (
+      id SERIAL PRIMARY KEY,
+      team_member_id INT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+      the_date DATE NOT NULL,
+      note TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS unavailable_member_date
+    ON unavailable_dates (team_member_id, the_date)`;
+
+  // Time-off requests: a date range + optional note, approved/denied by admin.
+  await sql`
+    CREATE TABLE IF NOT EXISTS time_off (
+      id SERIAL PRIMARY KEY,
+      team_member_id INT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      note TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','denied')),
+      decided_note TEXT,
+      decided_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS time_off_member ON time_off (team_member_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS time_off_status ON time_off (status)`;
+
+  // Repeating weekly template: default assignment per weekday (Mon=1 … Sat=6).
+  await sql`
+    CREATE TABLE IF NOT EXISTS schedule_template (
+      weekday INT PRIMARY KEY CHECK (weekday BETWEEN 1 AND 6),
+      team_member_id INT REFERENCES team_members(id) ON DELETE SET NULL,
+      start_time TEXT NOT NULL DEFAULT '11:55',
+      end_time TEXT NOT NULL DEFAULT '16:55',
+      is_training BOOLEAN NOT NULL DEFAULT false,
+      enabled BOOLEAN NOT NULL DEFAULT true
+    )
+  `;
+
+  // Per-recipient notifications for the team feature (staff see their own; admin
+  // rows have to_admin=true). Backs the in-app bell + email/SMS fan-out.
+  await sql`
+    CREATE TABLE IF NOT EXISTS team_notifications (
+      id SERIAL PRIMARY KEY,
+      team_member_id INT REFERENCES team_members(id) ON DELETE CASCADE,
+      to_admin BOOLEAN NOT NULL DEFAULT false,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT,
+      link TEXT,
+      read_at TIMESTAMPTZ,
+      emailed BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS team_notifications_member
+    ON team_notifications (team_member_id, read_at)`;
+  await sql`CREATE INDEX IF NOT EXISTS team_notifications_admin
+    ON team_notifications (to_admin, read_at) WHERE to_admin`;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */

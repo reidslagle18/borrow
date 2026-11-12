@@ -59,6 +59,13 @@ type Today = {
   dropoffs: Dropoff[];
   pull_reservations: PullReservation[];
   consignor_pulls: ConsignorPull[];
+  working_today?: WorkingToday | null;
+};
+type WorkingToday = {
+  member_name: string | null;
+  start_time: string;
+  end_time: string;
+  is_training: boolean;
 };
 type Notifications = {
   count: number;
@@ -112,7 +119,7 @@ export default function TodayPage() {
   const [rowBusy, setRowBusy] = useState<number | null>(null);
 
   const loadToday = useCallback(async () => {
-    const empty: Today = { pickups: [], returns_today: [], overdue: [], dropoffs: [], pull_reservations: [], consignor_pulls: [] };
+    const empty: Today = { pickups: [], returns_today: [], overdue: [], dropoffs: [], pull_reservations: [], consignor_pulls: [], working_today: null };
     try {
       const r = await fetch("/api/today");
       setData(r.ok ? await r.json() : empty);
@@ -414,6 +421,35 @@ export default function TodayPage() {
               · <span className="font-medium">{dropoffs.length}</span> drop-off
               {dropoffs.length === 1 ? "" : "s"}
             </p>
+
+            {/* Working today — who's on the front desk. */}
+            <section className="mt-6 rounded-2xl border border-sage-deep/30 bg-sage/15 p-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-medium">Working today</h2>
+                <Link href="/team/schedule" className="text-[13px] text-ink/45 hover:text-ink">
+                  Schedule →
+                </Link>
+              </div>
+              {data.working_today && data.working_today.member_name ? (
+                <p className="mt-2 rounded-xl bg-white/70 px-4 py-3 text-[15px]">
+                  <span className="font-medium">{data.working_today.member_name}</span>{" "}
+                  <span className="text-ink/55">
+                    · {prettyTime(data.working_today.start_time)} – {prettyTime(data.working_today.end_time)}
+                  </span>
+                  {data.working_today.is_training && (
+                    <span className="ml-2 rounded-full bg-butter px-2.5 py-0.5 text-[11px] font-medium">
+                      Training
+                    </span>
+                  )}
+                </p>
+              ) : (
+                <p className="mt-2 rounded-xl bg-white/60 px-4 py-3 text-[15px] text-ink/55">
+                  {data.working_today
+                    ? "No one is assigned to the front desk today."
+                    : "No shift scheduled today."}
+                </p>
+              )}
+            </section>
 
             {/* Pull from racks — two groups: consignor pulls (holds/retrievals
                 starting today or tomorrow) and reserved pulls (pieces at/near

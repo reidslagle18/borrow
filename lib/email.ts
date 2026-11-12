@@ -1070,3 +1070,124 @@ export async function sendApprovalRequest(d: ApprovalRequestData) {
     `)
   );
 }
+
+// --- Team / front-desk scheduling notifications (email, best-effort) --------
+// These power schedule-change, shift-reminder, and time-off emails. They reuse
+// the private sendEmail + BRAND_WRAP helpers above. No sensitive HR data is
+// ever included — just names, dates, and times.
+
+const STUDIO_URL = (process.env.STUDIO_URL || "https://admin.borrowfayetteville.com").replace(/\/$/, "");
+const pSans = "font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;";
+const btn = (href: string, label: string) =>
+  `<p style="margin:22px 0;"><a href="${href}" style="background:#1a1a1a;color:#f7f4ef;text-decoration:none;padding:12px 24px;border-radius:999px;font-family:Helvetica,Arial,sans-serif;font-size:14px;">${label}</a></p>`;
+
+export interface ShiftLine { date: string; time: string; training?: boolean }
+
+/** A newly-published (or re-published) week. Lists the staffer's own shifts. */
+export async function sendSchedulePublished(d: {
+  to: string;
+  name: string;
+  weekLabel: string;
+  shifts: ShiftLine[];
+}) {
+  const first = d.name.split(" ")[0] || "there";
+  const rows = d.shifts.length
+    ? `<ul style="${pSans}">${d.shifts
+        .map(
+          (s) =>
+            `<li><strong>${s.date}</strong> · ${s.time}${s.training ? " · Training" : ""}</li>`
+        )
+        .join("")}</ul>`
+    : `<p style="${pSans}">You're not scheduled this week.</p>`;
+  return sendEmail(
+    d.to,
+    `Your BORROW shifts for ${d.weekLabel}`,
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Schedule published</p>
+      <p style="font-size:16px;">Hi ${first}, the schedule for <strong>${d.weekLabel}</strong> is up. Here's where you're on:</p>
+      ${rows}
+      ${btn(`${STUDIO_URL}/my-shifts`, "View my shifts")}
+    `)
+  );
+}
+
+/** A change to an already-published week. */
+export async function sendScheduleChanged(d: {
+  to: string;
+  name: string;
+  weekLabel: string;
+  summary: string;
+}) {
+  const first = d.name.split(" ")[0] || "there";
+  return sendEmail(
+    d.to,
+    `Your BORROW schedule changed — ${d.weekLabel}`,
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Schedule updated</p>
+      <p style="font-size:16px;">Hi ${first}, a change was made to the schedule for <strong>${d.weekLabel}</strong>:</p>
+      <p style="${pSans}">${d.summary}</p>
+      ${btn(`${STUDIO_URL}/my-shifts`, "View my shifts")}
+    `)
+  );
+}
+
+/** Night-before shift reminder. */
+export async function sendShiftReminder(d: {
+  to: string;
+  name: string;
+  dateLabel: string;
+  timeLabel: string;
+  training?: boolean;
+}) {
+  const first = d.name.split(" ")[0] || "there";
+  return sendEmail(
+    d.to,
+    `Reminder: you're working tomorrow (${d.dateLabel})`,
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Shift reminder</p>
+      <p style="font-size:16px;">Hi ${first}, just a heads-up that you're on the schedule tomorrow:</p>
+      <p style="${pSans}"><strong>${d.dateLabel}</strong> · ${d.timeLabel}${d.training ? " · Training" : ""}</p>
+      <p style="${pSans}">See you at the studio!</p>
+    `)
+  );
+}
+
+/** Time-off request approved or denied. */
+export async function sendTimeOffDecision(d: {
+  to: string;
+  name: string;
+  approved: boolean;
+  rangeLabel: string;
+  note?: string;
+}) {
+  const first = d.name.split(" ")[0] || "there";
+  return sendEmail(
+    d.to,
+    `Your time-off request was ${d.approved ? "approved" : "declined"}`,
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Time off</p>
+      <p style="font-size:16px;">Hi ${first}, your time-off request for <strong>${d.rangeLabel}</strong> was <strong>${d.approved ? "approved" : "declined"}</strong>.</p>
+      ${d.note ? `<p style="${pSans}">Note from the studio: ${d.note}</p>` : ""}
+      ${btn(`${STUDIO_URL}/my-shifts`, "View my shifts")}
+    `)
+  );
+}
+
+/** Owner alert: a staffer submitted a new time-off request. */
+export async function sendTimeOffRequestAlert(d: {
+  to: string;
+  memberName: string;
+  rangeLabel: string;
+  note?: string;
+}) {
+  return sendEmail(
+    d.to,
+    `${d.memberName} requested time off`,
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">New time-off request</p>
+      <p style="font-size:16px;"><strong>${d.memberName}</strong> requested time off for <strong>${d.rangeLabel}</strong>.</p>
+      ${d.note ? `<p style="${pSans}">Their note: ${d.note}</p>` : ""}
+      ${btn(`${STUDIO_URL}/team/time-off`, "Review request")}
+    `)
+  );
+}

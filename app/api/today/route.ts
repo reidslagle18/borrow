@@ -12,7 +12,7 @@ export async function GET() {
   await ensureSchema();
   const lead = lastSafeRentalLeadDays(await getProgram());
 
-  const [pickups, returnsToday, overdue, dropoffs, pullReservations, consignorPulls] = await Promise.all([
+  const [pickups, returnsToday, overdue, dropoffs, pullReservations, consignorPulls, workingToday] = await Promise.all([
     // Pickups: reserved pieces due to go out today OR in the last 14 days that
     // were never picked up (late pickups) — so a recently-missed pickup still
     // shows, but months-old abandoned reservations don't clutter the list.
@@ -92,6 +92,16 @@ export async function GET() {
         AND rr.hold_start <= (now() AT TIME ZONE 'America/Chicago')::date + 1
       ORDER BY rr.hold_start ASC
     `,
+    // Front-desk staff scheduled today (one shift per day). team_member_id NULL
+    // means the day is on the calendar but nobody's assigned yet.
+    sql`
+      SELECT s.start_time, s.end_time, s.team_member_id, s.is_training,
+             tm.name AS member_name
+      FROM shifts s
+      LEFT JOIN team_members tm ON tm.id = s.team_member_id
+      WHERE s.shift_date = (now() AT TIME ZONE 'America/Chicago')::date
+      LIMIT 1
+    `,
   ]);
 
   return NextResponse.json(
@@ -102,6 +112,7 @@ export async function GET() {
       dropoffs,
       pull_reservations: pullReservations,
       consignor_pulls: consignorPulls,
+      working_today: workingToday[0] || null,
     },
     { headers: { "Cache-Control": "no-store" } }
   );

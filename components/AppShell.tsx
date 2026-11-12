@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { GlobalSearch, NotificationsBell } from "@/components/StudioTools";
+import TeamBell from "@/components/TeamBell";
 import { useMe } from "@/lib/useMe";
 
 // One simple, merged menu. Each top-level entry owns a set of routes; related
@@ -16,11 +17,13 @@ type Group = {
   label: string;
   match: string[];
   adminOnly?: boolean;
+  staffOnly?: boolean;
   tabs?: Tab[];
 };
 
 const GROUPS: Group[] = [
   { href: "/today", label: "Today", match: ["/today"] },
+  { href: "/my-shifts", label: "My Shifts", match: ["/my-shifts"], staffOnly: true },
   {
     href: "/checkout",
     label: "Checkout",
@@ -63,6 +66,18 @@ const GROUPS: Group[] = [
       { href: "/pickups", label: "Storage & Pickups" },
     ],
   },
+  {
+    href: "/team",
+    label: "Team",
+    match: ["/team"],
+    adminOnly: true,
+    tabs: [
+      { href: "/team", label: "Members" },
+      { href: "/team/schedule", label: "Schedule" },
+      { href: "/team/time-off", label: "Time off" },
+      { href: "/team/settings", label: "Settings" },
+    ],
+  },
   { href: "/finances", label: "Finances", match: ["/finances"], adminOnly: true },
   { href: "/settings", label: "Settings", match: ["/settings"] },
 ];
@@ -79,7 +94,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [loading, me, router]);
 
   const isAdminView = me?.role === "admin"; // effective (admin + view-as ⇒ staff)
-  const groups = GROUPS.filter((g) => !g.adminOnly || isAdminView);
+  const groups = GROUPS.filter(
+    (g) => (!g.adminOnly || isAdminView) && (!g.staffOnly || !isAdminView)
+  );
 
   const groupActive = (g: Group) =>
     g.match.some((m) => pathname === m || pathname.startsWith(m + "/"));
@@ -118,6 +135,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </Link>
         <GlobalSearch variant="sidebar" />
         <NotificationsBell variant="sidebar" />
+        <TeamBell variant="sidebar" />
         <nav className="mt-5 flex flex-col gap-1">
           {groups.map((g) => (
             <Link
@@ -169,6 +187,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-2">
             <GlobalSearch variant="topbar" />
             <NotificationsBell variant="topbar" />
+            <TeamBell variant="topbar" />
             <button
               onClick={logout}
               aria-label="Sign out"
