@@ -11,7 +11,7 @@ import { useMe } from "@/lib/useMe";
 // screens (Checkout + Quick Charge, Orders + Returns, Inventory + Look up + Pull
 // list, and the four consignor screens) are reached through the sub-tab strip
 // rendered under the header. Finances is admin-only.
-type Tab = { href: string; label: string; adminOnly?: boolean };
+type Tab = { href: string; label: string; adminOnly?: boolean; match?: string[] };
 type Group = {
   href: string;
   label: string;
@@ -84,23 +84,44 @@ const GROUPS: Group[] = [
     match: ["/team"],
     adminOnly: true,
     tabs: [
-      { href: "/team", label: "Members" },
-      { href: "/team/schedule", label: "Schedule" },
-      { href: "/team/coverage", label: "Coverage" },
-      { href: "/team/timesheets", label: "Timesheets" },
-      { href: "/team/hours-report", label: "Hours" },
-      { href: "/team/time-off", label: "Time off" },
-      { href: "/team/notes", label: "Shift notes" },
-      { href: "/team/announcements", label: "Announcements" },
-      { href: "/team/resources", label: "Resources" },
-      { href: "/team/devices", label: "Devices" },
-      { href: "/team/settings", label: "Settings" },
+      { href: "/team", label: "People", match: ["/team"] },
+      { href: "/team/schedule", label: "Schedule", match: ["/team/schedule", "/team/time-off"] },
+      { href: "/team/coverage", label: "Coverage", match: ["/team/coverage"] },
+      { href: "/team/timesheets", label: "Time & Pay", match: ["/team/timesheets", "/team/hours-report", "/team/devices"] },
+      { href: "/team/notes", label: "Comms", match: ["/team/notes", "/team/announcements", "/team/resources"] },
+      { href: "/team/settings", label: "Settings", match: ["/team/settings"] },
     ],
   },
   { href: "/resources", label: "Resources", match: ["/resources"], staffOnly: true },
   { href: "/finances", label: "Finances", match: ["/finances"], adminOnly: true },
   { href: "/settings", label: "Settings", match: ["/settings"] },
 ];
+
+// Secondary (within-group) tabs for the grouped Team heads: a lighter second row
+// so e.g. "Time & Pay" fans out to Timesheets / Hours / Devices.
+const TEAM_SUBGROUPS: Tab[][] = [
+  [
+    { href: "/team/schedule", label: "Schedule" },
+    { href: "/team/time-off", label: "Time off" },
+  ],
+  [
+    { href: "/team/timesheets", label: "Timesheets" },
+    { href: "/team/hours-report", label: "Hours" },
+    { href: "/team/devices", label: "Devices" },
+  ],
+  [
+    { href: "/team/notes", label: "Shift notes" },
+    { href: "/team/announcements", label: "Announcements" },
+    { href: "/team/resources", label: "Resources" },
+  ],
+];
+
+// A nav entry matches the current path. "/team" matches only itself (it's the
+// prefix of every Team route, so it must not swallow the others).
+function pathMatches(entry: string, pathname: string): boolean {
+  if (entry === "/team") return pathname === "/team";
+  return pathname === entry || pathname.startsWith(entry + "/");
+}
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -122,11 +143,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     g.match.some((m) => pathname === m || pathname.startsWith(m + "/"));
   const activeGroup = GROUPS.find(groupActive);
   const tabs = activeGroup?.tabs?.filter((t) => !t.adminOnly || isAdminView);
-  // The active tab is the longest href that prefixes the current path, so
-  // /inventory/featured highlights "Featured" (not also "Inventory").
+  // The active tab is the longest-matching entry for the current path (a tab may
+  // own several routes via `match`, e.g. "Time & Pay" → timesheets/hours/devices).
   const activeTabHref = (tabs ?? [])
-    .filter((t) => pathname === t.href || pathname.startsWith(t.href + "/"))
+    .filter((t) => (t.match ?? [t.href]).some((m) => pathMatches(m, pathname)))
     .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+
+  // Secondary within-group strip for grouped Team heads (only when a group has >1 page).
+  const teamSubgroup = TEAM_SUBGROUPS.find((grp) => grp.some((t) => pathMatches(t.href, pathname)));
 
   async function logout() {
     await fetch("/api/logout", { method: "POST" });
@@ -260,6 +284,28 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                       active
                         ? "bg-ink text-cream"
                         : "bg-white text-ink/60 hover:text-ink"
+                    }`}
+                  >
+                    {t.label}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Secondary within-group strip (e.g. Time & Pay → Timesheets/Hours/Devices) */}
+        {teamSubgroup && (
+          <div className="border-b border-ink/10 bg-white/50">
+            <div className="flex gap-1.5 overflow-x-auto px-5 py-2 md:px-10 [scrollbar-width:none]">
+              {teamSubgroup.map((t) => {
+                const active = pathMatches(t.href, pathname);
+                return (
+                  <Link
+                    key={t.href}
+                    href={t.href}
+                    className={`whitespace-nowrap rounded-full px-3 py-1 text-[12px] transition-colors ${
+                      active ? "bg-ink/80 text-cream" : "bg-ink/5 text-ink/55 hover:text-ink"
                     }`}
                   >
                     {t.label}
