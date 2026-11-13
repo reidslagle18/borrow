@@ -326,6 +326,15 @@ function ClockedView({ data, reload }: { data: ClockStatus; reload: () => void }
         <MissedClockout entryId={openEntry.id} reload={reload} />
       )}
 
+      {/* Shift tools — only while clocked in with a scheduled shift today */}
+      {openEntry && todayShift && (
+        <>
+          <ChecklistSection shiftId={todayShift.id} type="opening" title="Opening checklist" />
+          <ChecklistSection shiftId={todayShift.id} type="closing" title="Closing checklist" />
+          <ShiftNoteSection shiftId={todayShift.id} />
+        </>
+      )}
+
       {/* Manual time request */}
       <ManualRequest />
 
@@ -533,6 +542,288 @@ function ManualRequest() {
               Close
             </button>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Opening / closing checklist -------------------------------------------
+
+type ChecklistItem = {
+  id: number;
+  label: string;
+  checked: boolean;
+  checked_by: string | null;
+  checked_at: string | null;
+};
+type ChecklistData = { items: ChecklistItem[]; run: { submitted?: boolean } | null };
+
+function ChecklistSection({
+  shiftId,
+  type,
+  title,
+}: {
+  shiftId: number;
+  type: "opening" | "closing";
+  title: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState<ChecklistData | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [uncheckedAtSubmit, setUncheckedAtSubmit] = useState(0);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch(
+        `/api/clock/checklist?shift_id=${shiftId}&type=${type}`,
+        { cache: "no-store" },
+      );
+      if (r.ok) {
+        const d: ChecklistData = await r.json();
+        setData(d);
+        if (d.run?.submitted) setSubmitted(true);
+      } else {
+        setData({ items: [], run: null });
+      }
+    } catch {
+      setData({ items: [], run: null });
+    }
+  }, [shiftId, type]);
+
+  useEffect(() => {
+    if (open && !data) load();
+  }, [open, data, load]);
+
+  async function toggle(item: ChecklistItem) {
+    setBusyId(item.id);
+    setError("");
+    try {
+      const res = await fetch("/api/clock/checklist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shift_id: shiftId,
+          type,
+          item_id: item.id,
+          checked: !item.checked,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setError(d.error || "Couldn't update that. Try again.");
+      } else {
+        await load();
+      }
+    } catch {
+      setError("Couldn't reach the server. Try again.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function finish() {
+    setSubmitting(true);
+    setError("");
+    const unchecked = (data?.items ?? []).filter((i) => !i.checked).length;
+    try {
+      const res = await fetch("/api/clock/checklist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shift_id: shiftId, type, action: "submit" }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setError(d.error || "Couldn't submit. Try again.");
+      } else {
+        setUncheckedAtSubmit(unchecked);
+        setSubmitted(true);
+        await load();
+      }
+    } catch {
+      setError("Couldn't reach the server. Try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const items = data?.items ?? [];
+
+  return (
+    <div className={cardCls}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
+        <span className="text-[15px] font-medium">{title}</span>
+        <span className="text-ink/40">{open ? "–" : "+"}</span>
+      </button>
+
+      {open && (
+        <div className="mt-4 space-y-2">
+          {!data ? (
+            <div className="h-20 animate-pulse rounded-xl bg-ink/5" />
+          ) : items.length === 0 ? (
+            <p className="text-[14px] text-ink/55">No checklist items set up.</p>
+          ) : (
+            <>
+              {items.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => toggle(item)}
+                  disabled={busyId === item.id}
+                  className={`flex w-full items-start gap-3 rounded-xl p-3 text-left transition-colors disabled:opacity-50 ${
+                    item.checked ? "bg-sage/40" : "bg-cream/70"
+                  }`}
+                >
+                  <span
+                    className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border ${
+                      item.checked
+                        ? "border-sage-deep bg-sage-deep text-cream"
+                        : "border-ink/25 bg-white"
+                    }`}
+                  >
+                    {item.checked ? "✓" : ""}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[15px]">{item.label}</span>
+                    {item.checked && item.checked_by && (
+                      <span className="mt-0.5 block text-[12px] text-ink/50">
+                        {item.checked_by}
+                        {item.checked_at ? ` · ${fmtClock(item.checked_at)}` : ""}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              ))}
+
+              {error && <p className="text-[13px] text-blush-deep">{error}</p>}
+
+              {submitted ? (
+                <div className="space-y-2">
+                  <p className="rounded-xl bg-sage px-4 py-2 text-[14px] text-ink">Submitted</p>
+                  {type === "closing" && uncheckedAtSubmit > 0 && (
+                    <p className="rounded-xl bg-butter px-4 py-2 text-[13px]">
+                      Owner was notified of {uncheckedAtSubmit} unchecked item
+                      {uncheckedAtSubmit === 1 ? "" : "s"}.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <button onClick={finish} disabled={submitting} className={primaryBtnCls}>
+                  {submitting ? "Submitting…" : `Finish ${type} checklist`}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- End-of-shift note -----------------------------------------------------
+
+type ShiftNote = { id: number; body: string; created_at: string };
+
+function ShiftNoteSection({ shiftId }: { shiftId: number }) {
+  const [open, setOpen] = useState(false);
+  const [body, setBody] = useState("");
+  const [notes, setNotes] = useState<ShiftNote[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch("/api/clock/shift-note", { cache: "no-store" });
+      if (r.ok) {
+        const d: { notes: ShiftNote[] } = await r.json();
+        setNotes(d.notes ?? []);
+      } else {
+        setNotes([]);
+      }
+    } catch {
+      setNotes([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open && notes === null) load();
+  }, [open, notes, load]);
+
+  async function submit() {
+    if (!body.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const res = await fetch("/api/clock/shift-note", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shift_id: shiftId, body: body.trim() }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setError(d.error || "Couldn't save your note. Try again.");
+      } else {
+        setDone(true);
+        setBody("");
+        await load();
+      }
+    } catch {
+      setError("Couldn't reach the server. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className={cardCls}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
+        <span className="text-[15px] font-medium">End-of-shift note</span>
+        <span className="text-ink/40">{open ? "–" : "+"}</span>
+      </button>
+
+      {open && (
+        <div className="mt-4 space-y-3">
+          <p className="text-[13px] text-ink/55">
+            Anything the owner or next shift should know? Leave a quick note.
+          </p>
+          <textarea
+            value={body}
+            onChange={(e) => {
+              setBody(e.target.value);
+              setDone(false);
+            }}
+            rows={3}
+            placeholder="e.g. steamer is low on water, customer coming back tomorrow for a size 6…"
+            className={`${inputCls} resize-y`}
+          />
+          {error && <p className="text-[13px] text-blush-deep">{error}</p>}
+          {done && (
+            <p className="rounded-xl bg-sage px-4 py-2 text-[14px] text-ink">Note saved — thanks!</p>
+          )}
+          <button onClick={submit} disabled={busy || !body.trim()} className={primaryBtnCls}>
+            {busy ? "Saving…" : "Leave note"}
+          </button>
+
+          {notes && notes.length > 0 && (
+            <div className="space-y-2 border-t border-ink/10 pt-3">
+              <p className="text-xs uppercase tracking-[0.15em] text-ink/50">Your recent notes</p>
+              {notes.map((n) => (
+                <div key={n.id} className="rounded-xl bg-cream/70 p-3">
+                  <p className="whitespace-pre-wrap text-[14px]">{n.body}</p>
+                  <p className="mt-1 text-[12px] text-ink/45">{fmtDateTime(n.created_at)}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

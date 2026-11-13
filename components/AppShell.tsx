@@ -34,6 +34,8 @@ const GROUPS: Group[] = [
       { href: "/my-timesheet", label: "My Timesheet" },
     ],
   },
+  { href: "/open-shifts", label: "Open Shifts", match: ["/open-shifts"], staffOnly: true },
+  { href: "/announcements", label: "Announcements", match: ["/announcements"], staffOnly: true },
   {
     href: "/checkout",
     label: "Checkout",
@@ -84,13 +86,18 @@ const GROUPS: Group[] = [
     tabs: [
       { href: "/team", label: "Members" },
       { href: "/team/schedule", label: "Schedule" },
+      { href: "/team/coverage", label: "Coverage" },
       { href: "/team/timesheets", label: "Timesheets" },
       { href: "/team/hours-report", label: "Hours" },
       { href: "/team/time-off", label: "Time off" },
+      { href: "/team/notes", label: "Shift notes" },
+      { href: "/team/announcements", label: "Announcements" },
+      { href: "/team/resources", label: "Resources" },
       { href: "/team/devices", label: "Devices" },
       { href: "/team/settings", label: "Settings" },
     ],
   },
+  { href: "/resources", label: "Resources", match: ["/resources"], staffOnly: true },
   { href: "/finances", label: "Finances", match: ["/finances"], adminOnly: true },
   { href: "/settings", label: "Settings", match: ["/settings"] },
 ];

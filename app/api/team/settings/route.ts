@@ -34,6 +34,21 @@ export async function PUT(request: Request) {
       typeof b.pay_period_anchor === "string" && b.pay_period_anchor
         ? b.pay_period_anchor.slice(0, 10)
         : cur.pay_period_anchor,
+    coverage_auto_approve:
+      typeof b.coverage_auto_approve === "boolean" ? b.coverage_auto_approve : cur.coverage_auto_approve,
+    coverage_deadline_hours:
+      b.coverage_deadline_hours != null && !Number.isNaN(Number(b.coverage_deadline_hours))
+        ? Math.max(1, Math.floor(Number(b.coverage_deadline_hours)))
+        : cur.coverage_deadline_hours,
+    checklist_opening: Array.isArray(b.checklist_opening)
+      ? b.checklist_opening.map((x: unknown) => String(x)).filter((x: string) => x.trim())
+      : cur.checklist_opening,
+    checklist_closing: Array.isArray(b.checklist_closing)
+      ? b.checklist_closing.map((x: unknown) => String(x)).filter((x: string) => x.trim())
+      : cur.checklist_closing,
+    training_steps: Array.isArray(b.training_steps)
+      ? b.training_steps.map((x: unknown) => String(x)).filter((x: string) => x.trim())
+      : cur.training_steps,
   };
   await saveTeamSettings(next);
   await logAudit("team_settings_save", { entity: "team_settings", detail: { sms_enabled: next.sms_enabled } }, admin);

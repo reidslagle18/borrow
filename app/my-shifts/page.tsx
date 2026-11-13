@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import { useMe } from "@/lib/useMe";
 import { fmtWeekday, fmtShort, todayISO, addDays, fromISO, toISO } from "@/lib/dates";
@@ -165,6 +166,18 @@ function ShiftsTab() {
 
   return (
     <div className="mt-6 space-y-8">
+      {/* Need coverage? Point to the Open Shifts hub where shift ids resolve. */}
+      <Link
+        href="/open-shifts"
+        className="flex items-center justify-between gap-3 rounded-2xl bg-lavender/30 px-4 py-3 transition-colors hover:bg-lavender/40"
+      >
+        <span className="text-[14px]">
+          Need a shift covered? Open the <span className="font-medium">Open Shifts</span> page to
+          request coverage or pick up a teammate&apos;s shift.
+        </span>
+        <span className="shrink-0 text-ink/40">→</span>
+      </Link>
+
       {/* Upcoming shift cards */}
       <section>
         <h2 className="text-2xl font-medium">Upcoming shifts</h2>

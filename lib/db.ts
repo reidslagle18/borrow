@@ -1044,6 +1044,126 @@ async function createSchema(): Promise<void> {
   // we told the owner nobody clocked in 10 min after start.
   await sql`ALTER TABLE shifts ADD COLUMN IF NOT EXISTS clockin_reminded BOOLEAN NOT NULL DEFAULT false`;
   await sql`ALTER TABLE shifts ADD COLUMN IF NOT EXISTS noclockin_alerted BOOLEAN NOT NULL DEFAULT false`;
+
+  // ---- Coverage, checklists & communication -------------------------------
+
+  // Coverage requests + the Open Shifts board. kind: 'coverage' (find a sub),
+  // 'sick' (emergency — alert everyone now), 'extra' (admin posts an extra/
+  // unfilled shift). target_member_id set = asked a specific teammate; NULL =
+  // open board. The original person stays responsible until status='approved'.
+  await sql`
+    CREATE TABLE IF NOT EXISTS coverage_requests (
+      id SERIAL PRIMARY KEY,
+      shift_id INT NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,
+      requester_member_id INT REFERENCES team_members(id) ON DELETE SET NULL,
+      kind TEXT NOT NULL DEFAULT 'coverage' CHECK (kind IN ('coverage','sick','extra')),
+      target_member_id INT REFERENCES team_members(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'open'
+        CHECK (status IN ('open','claimed','approved','denied','cancelled')),
+      claimed_by_member_id INT REFERENCES team_members(id) ON DELETE SET NULL,
+      claimed_at TIMESTAMPTZ,
+      approved_by TEXT,
+      approved_at TIMESTAMPTZ,
+      note TEXT,
+      deadline_alerted BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS coverage_status ON coverage_requests (status)`;
+  await sql`CREATE INDEX IF NOT EXISTS coverage_shift ON coverage_requests (shift_id)`;
+
+  // One row per checklist item per shift occurrence (materialized from the
+  // template in settings when first opened). Records who ticked each + when.
+  await sql`
+    CREATE TABLE IF NOT EXISTS checklist_items (
+      id SERIAL PRIMARY KEY,
+      shift_id INT NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,
+      type TEXT NOT NULL CHECK (type IN ('opening','closing')),
+      position INT NOT NULL,
+      label TEXT NOT NULL,
+      checked BOOLEAN NOT NULL DEFAULT false,
+      checked_by TEXT,
+      checked_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS checklist_items_key ON checklist_items (shift_id, type, position)`;
+
+  // One row per (shift, checklist type) when a staffer submits/finishes it.
+  await sql`
+    CREATE TABLE IF NOT EXISTS checklist_runs (
+      shift_id INT NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,
+      type TEXT NOT NULL CHECK (type IN ('opening','closing')),
+      submitted_by TEXT,
+      submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      incomplete_count INT NOT NULL DEFAULT 0,
+      PRIMARY KEY (shift_id, type)
+    )
+  `;
+
+  // End-of-shift notes. Admin can flag any as needs_attention. Archived, not
+  // deleted.
+  await sql`
+    CREATE TABLE IF NOT EXISTS shift_notes (
+      id SERIAL PRIMARY KEY,
+      shift_id INT REFERENCES shifts(id) ON DELETE SET NULL,
+      member_id INT REFERENCES team_members(id) ON DELETE SET NULL,
+      shift_date DATE,
+      body TEXT NOT NULL,
+      needs_attention BOOLEAN NOT NULL DEFAULT false,
+      archived_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS shift_notes_created ON shift_notes (created_at DESC) WHERE archived_at IS NULL`;
+
+  // Team announcements + per-member read receipts.
+  await sql`
+    CREATE TABLE IF NOT EXISTS announcements (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_by TEXT,
+      archived_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS announcement_reads (
+      announcement_id INT NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+      member_id INT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+      read_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (announcement_id, member_id)
+    )
+  `;
+
+  // Resources: training docs + store policies. Archived, not deleted.
+  await sql`
+    CREATE TABLE IF NOT EXISTS resources (
+      id SERIAL PRIMARY KEY,
+      kind TEXT NOT NULL DEFAULT 'doc' CHECK (kind IN ('doc','policy')),
+      title TEXT NOT NULL,
+      body TEXT,
+      url TEXT,
+      position INT NOT NULL DEFAULT 0,
+      archived_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `;
+
+  // Per-new-hire training checklist progress (steps come from settings).
+  await sql`
+    CREATE TABLE IF NOT EXISTS training_progress (
+      member_id INT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+      step_key TEXT NOT NULL,
+      done BOOLEAN NOT NULL DEFAULT false,
+      done_by TEXT,
+      done_at TIMESTAMPTZ,
+      PRIMARY KEY (member_id, step_key)
+    )
+  `;
 }
 
 /** Lazily creates tables on first use; safe to call on every request. */

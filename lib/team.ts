@@ -61,7 +61,31 @@ export interface TeamSettings {
   default_end: string;
   pay_period_frequency: "weekly" | "biweekly" | "semimonthly";
   pay_period_anchor: string; // YYYY-MM-DD reference period start (weekly/biweekly)
+  coverage_auto_approve: boolean; // auto-approve the first claim (vs owner approves)
+  coverage_deadline_hours: number; // alert owner if still open this long before shift
+  checklist_opening: string[];
+  checklist_closing: string[];
+  training_steps: string[];
 }
+
+export const DEFAULT_CHECKLIST_OPENING = [
+  "Unlock, lights, music on",
+  "Read the Today dashboard",
+  "Confirm the Stripe reader is Online and the scanner is charged",
+  "Pull reserved pieces and the pull list",
+  "Straighten racks and reset the fitting room",
+  "Check Needs Attention",
+];
+export const DEFAULT_CHECKLIST_CLOSING = [
+  "Flip the sign",
+  "Scan in returns; note any damage or missing hangers/bags",
+  "Confirm every pickup was marked picked up",
+  "Tidy the fitting room and mirrors",
+  "Charge the iPad and scanner; leave the reader plugged in",
+  "Text the owner a summary",
+  "Lock up",
+];
+export const DEFAULT_TRAINING_STEPS = ["Checkout", "Returns", "Look up a piece", "Steaming", "Closing"];
 
 export const DEFAULT_TEAM_SETTINGS: TeamSettings = {
   sms_enabled: false, // OFF until the owner's text number is approved
@@ -71,6 +95,11 @@ export const DEFAULT_TEAM_SETTINGS: TeamSettings = {
   default_end: DEFAULT_END,
   pay_period_frequency: "biweekly",
   pay_period_anchor: "2026-01-05",
+  coverage_auto_approve: false, // owner approves replacements by default
+  coverage_deadline_hours: 48,
+  checklist_opening: DEFAULT_CHECKLIST_OPENING,
+  checklist_closing: DEFAULT_CHECKLIST_CLOSING,
+  training_steps: DEFAULT_TRAINING_STEPS,
 };
 
 export async function getTeamSettings(): Promise<TeamSettings> {

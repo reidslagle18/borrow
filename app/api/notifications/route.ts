@@ -57,6 +57,7 @@ export async function GET() {
     underperformers,
     unclaimedStorage,
     noShows,
+    coverageUnfilled,
   ] = await Promise.all([
     sql`
       SELECT i.id, COALESCE(NULLIF(i.name, ''), i.brand) AS label,
@@ -267,6 +268,14 @@ export async function GET() {
       ORDER BY r.due_date ASC
       LIMIT 20
     `.catch(guard("no_shows")),
+    // Shifts still needing coverage (open requests for upcoming shifts).
+    sql`
+      SELECT cr.id, to_char(s.shift_date, 'YYYY-MM-DD') AS shift_date, cr.kind
+      FROM coverage_requests cr JOIN shifts s ON s.id = cr.shift_id
+      WHERE cr.status = 'open' AND s.shift_date >= (now() AT TIME ZONE 'America/Chicago')::date
+      ORDER BY s.shift_date ASC
+      LIMIT 20
+    `.catch(guard("coverage_unfilled")),
   ]);
 
   // Failed card charges + never-picked-up (no_shows) are intentionally excluded
@@ -282,7 +291,8 @@ export async function GET() {
     sizesOut.length +
     retrievals.length +
     underperformers.length +
-    unclaimedStorage.length;
+    unclaimedStorage.length +
+    coverageUnfilled.length;
 
   return NextResponse.json(
     {
@@ -300,6 +310,7 @@ export async function GET() {
       underperformers,
       unclaimed_storage: unclaimedStorage,
       no_shows: noShows,
+      coverage_unfilled: coverageUnfilled,
     },
     { headers: { "Cache-Control": "no-store" } }
   );

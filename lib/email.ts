@@ -1248,3 +1248,58 @@ export async function sendTimeEntryDecision(d: { to: string; name: string; summa
     `)
   );
 }
+
+// --- Coverage / open-shift notifications (email, best-effort) ----------------
+
+/** A shift needs coverage (or is up for grabs). urgent=true for sick/emergency. */
+export async function sendCoverageRequest(d: {
+  to: string;
+  name: string;
+  shiftLabel: string;
+  urgent?: boolean;
+  byName?: string;
+}) {
+  const first = d.name.split(" ")[0] || "there";
+  const lead = d.urgent
+    ? `${d.byName || "A teammate"} is out sick and this shift needs coverage ASAP:`
+    : `A shift is up for grabs${d.byName ? ` (${d.byName} needs coverage)` : ""}:`;
+  return sendEmail(
+    d.to,
+    d.urgent ? "Urgent: a shift needs coverage" : "A shift needs coverage",
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">${d.urgent ? "Urgent coverage" : "Open shift"}</p>
+      <p style="font-size:16px;">Hi ${first}, ${lead}</p>
+      <p style="${pSans}"><strong>${d.shiftLabel}</strong></p>
+      <p style="${pSans}">If you can take it, open Open Shifts and tap “I'll take it.”</p>
+      ${btn(`${STUDIO_URL}/open-shifts`, "View open shifts")}
+    `)
+  );
+}
+
+/** Result of a coverage request (approved / claimed / you got the shift). */
+export async function sendCoverageResult(d: { to: string; name: string; summary: string }) {
+  const first = d.name.split(" ")[0] || "there";
+  return sendEmail(
+    d.to,
+    "Shift coverage update",
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Coverage update</p>
+      <p style="font-size:16px;">Hi ${first},</p>
+      <p style="${pSans}">${d.summary}</p>
+      ${btn(`${STUDIO_URL}/my-shifts`, "View my shifts")}
+    `)
+  );
+}
+
+/** Owner alert: a coverage claim is waiting for approval. */
+export async function sendCoverageClaimAlert(d: { to: string; summary: string }) {
+  return sendEmail(
+    d.to,
+    "A shift claim needs your approval",
+    BRAND_WRAP(`
+      <p style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#888;margin:0 0 24px;">Coverage</p>
+      <p style="font-size:16px;">${d.summary}</p>
+      ${btn(`${STUDIO_URL}/team/coverage`, "Review coverage")}
+    `)
+  );
+}

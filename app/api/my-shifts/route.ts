@@ -24,7 +24,7 @@ export async function GET() {
   const horizon = addDays(today, 70);
 
   const [shifts, pubWeeks] = await Promise.all([
-    sql`SELECT to_char(s.shift_date,'YYYY-MM-DD') AS date, s.start_time, s.end_time,
+    sql`SELECT s.id, to_char(s.shift_date,'YYYY-MM-DD') AS date, s.start_time, s.end_time,
                s.team_member_id, s.is_training, tm.name AS member_name
         FROM shifts s LEFT JOIN team_members tm ON tm.id = s.team_member_id
         WHERE s.shift_date >= ${today} AND s.shift_date <= ${horizon}
@@ -34,12 +34,12 @@ export async function GET() {
   ]);
 
   const published = new Set((pubWeeks as { week_start: string }[]).map((w) => w.week_start));
-  const visible = (shifts as { date: string; start_time: string; end_time: string; team_member_id: number | null; is_training: boolean; member_name: string | null }[])
+  const visible = (shifts as { id: number; date: string; start_time: string; end_time: string; team_member_id: number | null; is_training: boolean; member_name: string | null }[])
     .filter((s) => published.has(mondayOf(s.date)));
 
   const upcoming = visible
     .filter((s) => s.team_member_id === member.id)
-    .map((s) => ({ date: s.date, start_time: s.start_time, end_time: s.end_time, is_training: s.is_training }));
+    .map((s) => ({ id: s.id, date: s.date, start_time: s.start_time, end_time: s.end_time, is_training: s.is_training }));
 
   const coverage = visible
     .filter((s) => s.team_member_id != null)

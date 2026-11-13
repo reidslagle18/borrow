@@ -82,6 +82,7 @@ type Notifications = {
   underperformers: unknown[];
   unclaimed_storage: unknown[];
   no_shows: unknown[];
+  coverage_unfilled?: unknown[];
 };
 
 function prettyTime(t: string): string {
@@ -264,6 +265,7 @@ export default function TodayPage() {
   // it's handled. Only groups with items render.
   const attention: { key: string; label: string; href: string }[] = notif
     ? [
+        { key: "coverage_unfilled", n: notif.coverage_unfilled?.length ?? 0, href: "/team/coverage", one: "shift still needs coverage", many: "shifts still need coverage" },
         { key: "overdue_reserved", n: notif.overdue_reserved?.length ?? 0, href: "/returns", one: "overdue piece with a reservation waiting", many: "overdue pieces with reservations waiting" },
         { key: "disputed", n: notif.disputed?.length ?? 0, href: "/consignors", one: "disputed replacement value", many: "disputed replacement values" },
         { key: "pending_approvals", n: notif.pending_approvals?.length ?? 0, href: "/consignors", one: "consignor with items to approve", many: "consignors with items to approve" },

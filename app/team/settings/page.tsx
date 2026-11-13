@@ -17,6 +17,11 @@ type TeamSettings = {
   default_end: string;
   pay_period_frequency: "weekly" | "biweekly" | "semimonthly";
   pay_period_anchor: string;
+  coverage_auto_approve: boolean;
+  coverage_deadline_hours: number;
+  checklist_opening: string[];
+  checklist_closing: string[];
+  training_steps: string[];
 };
 
 export default function TeamSettingsPage() {
@@ -56,6 +61,17 @@ export default function TeamSettingsPage() {
           owner_sms: settings.owner_sms,
           pay_period_frequency: settings.pay_period_frequency,
           pay_period_anchor: settings.pay_period_anchor || null,
+          coverage_auto_approve: settings.coverage_auto_approve,
+          coverage_deadline_hours: settings.coverage_deadline_hours,
+          checklist_opening: (settings.checklist_opening ?? [])
+            .map((s) => s.trim())
+            .filter(Boolean),
+          checklist_closing: (settings.checklist_closing ?? [])
+            .map((s) => s.trim())
+            .filter(Boolean),
+          training_steps: (settings.training_steps ?? [])
+            .map((s) => s.trim())
+            .filter(Boolean),
         }),
       });
       if (!res.ok) {
@@ -278,9 +294,208 @@ export default function TeamSettingsPage() {
                 )}
               </div>
             </section>
+
+            {/* Shift coverage */}
+            <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
+              <h2 className="font-serif text-xl italic text-ink/70">
+                Shift coverage
+              </h2>
+              <p className="mt-1 text-[13px] text-ink/50">
+                How open and extra shifts get approved and chased.
+              </p>
+
+              <div className="mt-4 space-y-3">
+                <label className="flex items-start gap-3 rounded-xl bg-white p-3.5 text-[14px]">
+                  <input
+                    type="checkbox"
+                    checked={settings.coverage_auto_approve}
+                    onChange={(e) =>
+                      setSettings((s) =>
+                        s ? { ...s, coverage_auto_approve: e.target.checked } : s
+                      )
+                    }
+                    className="mt-0.5 h-4 w-4 accent-ink"
+                  />
+                  <span>
+                    Auto-approve the first person who claims a shift
+                    <span className="mt-0.5 block text-[12px] text-ink/45">
+                      Off = you approve each replacement.
+                    </span>
+                  </span>
+                </label>
+
+                <div>
+                  <label className={labelCls}>
+                    Alert me if a shift is still uncovered this many hours before
+                    it starts
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    className={inputCls}
+                    value={settings.coverage_deadline_hours}
+                    onChange={(e) =>
+                      setSettings((s) =>
+                        s
+                          ? {
+                              ...s,
+                              coverage_deadline_hours: Math.max(
+                                0,
+                                Math.floor(Number(e.target.value) || 0)
+                              ),
+                            }
+                          : s
+                      )
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center gap-3">
+                <button
+                  onClick={save}
+                  disabled={saving}
+                  className="rounded-full bg-ink px-5 py-2.5 text-[14px] text-cream disabled:opacity-40"
+                >
+                  {saving ? "Saving…" : "Save settings"}
+                </button>
+                {savedAt && <span className="text-sm text-sage-deep">Saved ✓</span>}
+                {saveError && (
+                  <span className="text-sm text-blush-deep">{saveError}</span>
+                )}
+              </div>
+            </section>
+
+            {/* Shift checklists */}
+            <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
+              <h2 className="font-serif text-xl italic text-ink/70">
+                Shift checklists
+              </h2>
+              <p className="mt-1 text-[13px] text-ink/50">
+                The opening and closing tasks staff run each shift.
+              </p>
+
+              <div className="mt-4 grid gap-5 sm:grid-cols-2">
+                <EditableList
+                  label="Opening"
+                  items={settings.checklist_opening ?? []}
+                  onItems={(items) =>
+                    setSettings((s) =>
+                      s ? { ...s, checklist_opening: items } : s
+                    )
+                  }
+                />
+                <EditableList
+                  label="Closing"
+                  items={settings.checklist_closing ?? []}
+                  onItems={(items) =>
+                    setSettings((s) =>
+                      s ? { ...s, checklist_closing: items } : s
+                    )
+                  }
+                />
+              </div>
+
+              <div className="mt-4 flex items-center gap-3">
+                <button
+                  onClick={save}
+                  disabled={saving}
+                  className="rounded-full bg-ink px-5 py-2.5 text-[14px] text-cream disabled:opacity-40"
+                >
+                  {saving ? "Saving…" : "Save settings"}
+                </button>
+                {savedAt && <span className="text-sm text-sage-deep">Saved ✓</span>}
+                {saveError && (
+                  <span className="text-sm text-blush-deep">{saveError}</span>
+                )}
+              </div>
+            </section>
+
+            {/* New-hire training steps */}
+            <section className="mt-6 rounded-2xl border border-ink/10 bg-white/60 p-5">
+              <h2 className="font-serif text-xl italic text-ink/70">
+                New-hire training steps
+              </h2>
+              <p className="mt-1 text-[13px] text-ink/50">
+                The checklist you tick off for each new hire on the Resources page.
+              </p>
+
+              <div className="mt-4 max-w-md">
+                <EditableList
+                  label="Training steps"
+                  items={settings.training_steps ?? []}
+                  onItems={(items) =>
+                    setSettings((s) => (s ? { ...s, training_steps: items } : s))
+                  }
+                />
+              </div>
+
+              <div className="mt-4 flex items-center gap-3">
+                <button
+                  onClick={save}
+                  disabled={saving}
+                  className="rounded-full bg-ink px-5 py-2.5 text-[14px] text-cream disabled:opacity-40"
+                >
+                  {saving ? "Saving…" : "Save settings"}
+                </button>
+                {savedAt && <span className="text-sm text-sage-deep">Saved ✓</span>}
+                {saveError && (
+                  <span className="text-sm text-blush-deep">{saveError}</span>
+                )}
+              </div>
+            </section>
           </>
         )}
       </div>
     </AppShell>
+  );
+}
+
+function EditableList({
+  label,
+  items,
+  onItems,
+}: {
+  label: string;
+  items: string[];
+  onItems: (items: string[]) => void;
+}) {
+  return (
+    <div>
+      <label className={labelCls}>{label}</label>
+      <div className="space-y-2">
+        {items.length === 0 && (
+          <p className="text-[13px] text-ink/40">No items yet.</p>
+        )}
+        {items.map((item, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <input
+              className={inputCls}
+              value={item}
+              onChange={(e) => {
+                const next = items.slice();
+                next[i] = e.target.value;
+                onItems(next);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => onItems(items.filter((_, j) => j !== i))}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-ink/15 text-ink/50 hover:text-ink"
+              aria-label="Remove item"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={() => onItems([...items, ""])}
+        className="mt-2 rounded-full border border-ink/15 px-4 py-2 text-[13px]"
+      >
+        + Add item
+      </button>
+    </div>
   );
 }

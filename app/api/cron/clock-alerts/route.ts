@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
-import { createNotification } from "@/lib/team";
+import { createNotification, getTeamSettings } from "@/lib/team";
 import { prettyRange } from "@/lib/team-shared";
 import { sendClockInReminder, sendNoClockInAlert } from "@/lib/email";
+import { fmtShort } from "@/lib/dates";
 
 /**
  * Clock alerts (run every few minutes by Vercel Cron — see vercel.json):
@@ -106,10 +107,45 @@ export async function GET(request: Request) {
     missedFlagged++;
   }
 
+  // 4. Coverage deadline — open requests within the deadline window of their
+  // shift, not yet alerted → tell the owner (Needs Attention + Today).
+  const settings = await getTeamSettings();
+  const deadlineH = settings.coverage_deadline_hours;
+  const dueSoon = await sql`
+    SELECT cr.id, to_char(s.shift_date,'YYYY-MM-DD') AS shift_date, s.start_time,
+           rm.name AS requester_name, cr.kind
+    FROM coverage_requests cr JOIN shifts s ON s.id = cr.shift_id
+    LEFT JOIN team_members rm ON rm.id = cr.requester_member_id
+    WHERE cr.status = 'open' AND cr.deadline_alerted = false
+      AND ((s.shift_date::timestamp + s.start_time::time) AT TIME ZONE 'America/Chicago') > now()
+      AND ((s.shift_date::timestamp + s.start_time::time) AT TIME ZONE 'America/Chicago')
+          <= now() + make_interval(hours => ${deadlineH})
+  `;
+  let coverageAlerts = 0;
+  for (const r of dueSoon as { id: number; shift_date: string; start_time: string; requester_name: string | null; kind: string }[]) {
+    await createNotification({
+      toAdmin: true,
+      kind: "coverage_unfilled",
+      title: "Shift still uncovered",
+      body: `${fmtShort(r.shift_date)} ${prettyRange(r.start_time, r.start_time)} is still open${r.requester_name ? ` (${r.requester_name} needs out)` : ""} and the shift is soon.`,
+      link: "/team/coverage",
+    });
+    if (process.env.ADMIN_EMAIL) {
+      try {
+        await sendNoClockInAlert({ to: process.env.ADMIN_EMAIL, memberName: r.requester_name || "An open shift", shiftLabel: `is still uncovered for ${fmtShort(r.shift_date)}` });
+      } catch {
+        /* non-fatal */
+      }
+    }
+    await sql`UPDATE coverage_requests SET deadline_alerted = true WHERE id = ${r.id}`;
+    coverageAlerts++;
+  }
+
   return NextResponse.json({
     ok: true,
     reminders_sent: remindersSent,
     no_clockin_alerts: alerts,
     missed_clockouts_flagged: missedFlagged,
+    coverage_alerts: coverageAlerts,
   });
 }
