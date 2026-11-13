@@ -55,6 +55,7 @@ export default function TeamPage() {
   const { me, loading: meLoading } = useMe();
   const isAdmin = me?.role === "admin";
   const [members, setMembers] = useState<Member[]>([]);
+  const [logins, setLogins] = useState<{ id: number; username: string; name: string }[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -68,6 +69,13 @@ export default function TeamPage() {
       if (!res.ok) throw new Error(`members ${res.status}`);
       setMembers(await res.json());
       setLoaded(true);
+      // staff logins (for linking a member to their login)
+      try {
+        const sres = await fetch("/api/staff");
+        if (sres.ok) setLogins(await sres.json());
+      } catch {
+        /* non-fatal */
+      }
     } catch {
       setLoadError("Couldn't load the team — refresh to try again.");
     }
@@ -271,7 +279,7 @@ export default function TeamPage() {
                 </p>
               ) : (
                 active.map((m) => (
-                  <MemberCard key={m.id} member={m} onChange={load} />
+                  <MemberCard key={m.id} member={m} logins={logins} onChange={load} />
                 ))
               )}
             </div>
@@ -281,7 +289,7 @@ export default function TeamPage() {
                 <h2 className="font-serif text-xl italic text-ink/70">Inactive</h2>
                 <div className="mt-3 space-y-4">
                   {inactive.map((m) => (
-                    <MemberCard key={m.id} member={m} onChange={load} />
+                    <MemberCard key={m.id} member={m} logins={logins} onChange={load} />
                   ))}
                 </div>
               </div>
@@ -293,9 +301,18 @@ export default function TeamPage() {
   );
 }
 
-function MemberCard({ member, onChange }: { member: Member; onChange: () => void }) {
+function MemberCard({
+  member,
+  logins,
+  onChange,
+}: {
+  member: Member;
+  logins: { id: number; username: string; name: string }[];
+  onChange: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [linkSel, setLinkSel] = useState("");
   const [err, setErr] = useState("");
   const onboarding = member.onboarding || {};
   const open = openOnboardingCount(onboarding);
@@ -427,10 +444,43 @@ function MemberCard({ member, onChange }: { member: Member; onChange: () => void
         </div>
       </div>
 
-      {!member.login_username && (
-        <p className="mt-2 text-[12px] text-ink/40">
-          Create a staff login in Settings → Staff logins, then it links here.
-        </p>
+      {member.login_username ? (
+        <div className="mt-2 flex items-center gap-2 text-[12px] text-ink/50">
+          <span>
+            Staff login: <strong>{member.login_username}</strong>
+          </span>
+          <button
+            onClick={() => patch({ staff_user_id: null })}
+            disabled={busy}
+            className="underline underline-offset-2 hover:text-ink disabled:opacity-40"
+          >
+            Unlink
+          </button>
+        </div>
+      ) : (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]">
+          <span className="text-ink/45">Link a staff login:</span>
+          <select
+            value={linkSel}
+            onChange={(e) => setLinkSel(e.target.value)}
+            className="rounded-lg border border-ink/15 bg-white px-2 py-1 text-[12px]"
+          >
+            <option value="">— choose —</option>
+            {logins.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.username} ({l.name})
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => linkSel && patch({ staff_user_id: Number(linkSel) })}
+            disabled={busy || !linkSel}
+            className="rounded-full bg-ink px-3 py-1 text-[12px] text-cream disabled:opacity-40"
+          >
+            Link
+          </button>
+          <span className="text-ink/40">or create one in Settings → Staff logins</span>
+        </div>
       )}
 
       {/* Onboarding checklist */}
