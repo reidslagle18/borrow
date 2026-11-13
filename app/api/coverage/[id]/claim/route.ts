@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth";
 import { memberForStaffUser, createNotification, getTeamSettings } from "@/lib/team";
 import { isMemberEligible, shiftLabel } from "@/lib/coverage";
 import { sendCoverageResult, sendCoverageClaimAlert } from "@/lib/email";
+import { sendSMS } from "@/lib/sms";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -61,5 +62,6 @@ export async function POST(request: Request, { params }: Ctx) {
   // Pending owner approval.
   await createNotification({ toAdmin: true, kind: "coverage_claim", title: "Shift claim needs approval", body: `${member.name} wants to take ${cr.requester_name ? cr.requester_name + "'s" : "an open"} shift — ${label}.`, link: "/team/coverage" });
   if (process.env.ADMIN_EMAIL) { try { await sendCoverageClaimAlert({ to: process.env.ADMIN_EMAIL, summary: `${member.name} claimed ${cr.requester_name ? cr.requester_name + "'s" : "an open"} shift (${label}). Approve it in Coverage.` }); } catch {} }
+  await sendSMS(settings.owner_sms, `BORROW: ${member.name} wants to take ${cr.requester_name ? cr.requester_name + "'s" : "an open"} shift (${label}). Approve in Coverage.`);
   return NextResponse.json({ ok: true, approved: false });
 }

@@ -5,6 +5,7 @@ import { logAudit } from "@/lib/audit";
 import { createNotification } from "@/lib/team";
 import { fmtShort } from "@/lib/dates";
 import { sendTimeOffDecision } from "@/lib/email";
+import { sendSMS } from "@/lib/sms";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -30,7 +31,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
   if (!r) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const range = r.start_date === r.end_date ? fmtShort(r.start_date) : `${fmtShort(r.start_date)} – ${fmtShort(r.end_date)}`;
-  const m = (await sql`SELECT name, email FROM team_members WHERE id = ${r.team_member_id}`)[0];
+  const m = (await sql`SELECT name, email, phone FROM team_members WHERE id = ${r.team_member_id}`)[0];
   const approved = status === "approved";
 
   // conflicts with assigned shifts (so the owner knows coverage is needed)
@@ -54,6 +55,7 @@ export async function PATCH(request: Request, { params }: Ctx) {
       /* non-fatal */
     }
   }
+  await sendSMS(m?.phone, `BORROW: your time off for ${range} was ${approved ? "approved" : "declined"}${b.note ? ` — ${b.note}` : ""}.`);
 
   await logAudit(approved ? "timeoff_approve" : "timeoff_deny", { entity: "time_off", entityId: tid }, admin);
   return NextResponse.json({ ok: true, status, assigned_shift_conflicts: conflicts[0].n });

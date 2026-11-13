@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { sql, ensureSchema } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { memberForStaffUser, createNotification } from "@/lib/team";
+import { memberForStaffUser, createNotification, getTeamSettings } from "@/lib/team";
 import { fmtShort } from "@/lib/dates";
 import { sendTimeOffRequestAlert } from "@/lib/email";
+import { sendSMS } from "@/lib/sms";
 
 /** The logged-in staffer's own time-off requests. */
 export async function GET() {
@@ -57,6 +58,8 @@ export async function POST(request: Request) {
       /* non-fatal */
     }
   }
+  const settings = await getTeamSettings();
+  await sendSMS(settings.owner_sms, `BORROW: ${member.name} requested time off (${range}). Review in Team → Schedule → Time off.`);
 
   return NextResponse.json({ ok: true, id: rows[0].id }, { status: 201 });
 }

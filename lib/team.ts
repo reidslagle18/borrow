@@ -32,6 +32,9 @@ export {
 };
 export type { ConflictKind };
 
+/** Base URL of the studio app, for links in emails/SMS. */
+export const STUDIO_URL = (process.env.STUDIO_URL || "https://admin.borrowfayetteville.com").replace(/\/$/, "");
+
 /** The Monday (YYYY-MM-DD) of the week containing `iso`. */
 export function mondayOf(iso: string): string {
   const d = fromISO(iso);

@@ -5,6 +5,8 @@ import { logAudit } from "@/lib/audit";
 import { mondayOf, weekDates, weekLabel, createNotification, prettyRange } from "@/lib/team";
 import { fmtWeekday } from "@/lib/dates";
 import { sendSchedulePublished } from "@/lib/email";
+import { sendSMS } from "@/lib/sms";
+import { STUDIO_URL } from "@/lib/team";
 
 /**
  * POST /api/team/schedule/publish — publish or unpublish a week.
@@ -40,15 +42,15 @@ export async function POST(request: Request) {
 
   // Gather each member's shifts this week for their notification + email.
   const rows = await sql`
-    SELECT s.team_member_id AS mid, tm.name, tm.email,
+    SELECT s.team_member_id AS mid, tm.name, tm.email, tm.phone,
            to_char(s.shift_date,'YYYY-MM-DD') AS d, s.start_time, s.end_time, s.is_training
     FROM shifts s JOIN team_members tm ON tm.id = s.team_member_id
     WHERE s.shift_date >= ${weekStart} AND s.shift_date <= ${weekEnd} AND s.team_member_id IS NOT NULL
     ORDER BY s.shift_date ASC
   `;
-  const byMember = new Map<number, { name: string; email: string | null; shifts: { date: string; time: string; training?: boolean }[] }>();
-  for (const r of rows as { mid: number; name: string; email: string | null; d: string; start_time: string; end_time: string; is_training: boolean }[]) {
-    if (!byMember.has(r.mid)) byMember.set(r.mid, { name: r.name, email: r.email, shifts: [] });
+  const byMember = new Map<number, { name: string; email: string | null; phone: string | null; shifts: { date: string; time: string; training?: boolean }[] }>();
+  for (const r of rows as { mid: number; name: string; email: string | null; phone: string | null; d: string; start_time: string; end_time: string; is_training: boolean }[]) {
+    if (!byMember.has(r.mid)) byMember.set(r.mid, { name: r.name, email: r.email, phone: r.phone, shifts: [] });
     byMember.get(r.mid)!.shifts.push({
       date: `${fmtWeekday(r.d)}`,
       time: prettyRange(r.start_time, r.end_time),
@@ -73,6 +75,11 @@ export async function POST(request: Request) {
         /* non-fatal */
       }
     }
+    // Text (only sends if SMS is configured + enabled; otherwise a silent no-op).
+    await sendSMS(
+      info.phone,
+      `BORROW: your schedule for ${weekLabel(weekStart)} is posted — ${info.shifts.length} shift${info.shifts.length === 1 ? "" : "s"}. ${STUDIO_URL}/my-shifts`
+    );
   }
 
   await logAudit("schedule_publish", { entity: "schedule_week", entityId: weekStart, detail: { notified } }, admin);

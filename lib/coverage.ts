@@ -23,10 +23,10 @@ export function shiftLabel(s: CoverageShift): string {
 export async function eligibleMembersForShift(
   shiftDate: string,
   excludeMemberId: number | null
-): Promise<{ id: number; name: string; email: string | null }[]> {
+): Promise<{ id: number; name: string; email: string | null; phone: string | null }[]> {
   const weekday = fromISO(shiftDate).getDay(); // 0=Sun … 6=Sat
   const rows = await sql`
-    SELECT tm.id, tm.name, tm.email
+    SELECT tm.id, tm.name, tm.email, tm.phone
     FROM team_members tm
     WHERE tm.active = true
       AND tm.id <> ${excludeMemberId ?? -1}
@@ -51,7 +51,7 @@ export async function eligibleMembersForShift(
           < tm.max_shifts_per_week)
     ORDER BY tm.name ASC
   `;
-  return rows as { id: number; name: string; email: string | null }[];
+  return rows as { id: number; name: string; email: string | null; phone: string | null }[];
 }
 
 /** Is a specific member eligible to take a shift on `shiftDate`? */

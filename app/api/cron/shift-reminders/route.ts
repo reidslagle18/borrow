@@ -3,6 +3,7 @@ import { sql, ensureSchema } from "@/lib/db";
 import { mondayOf, prettyRange, createNotification } from "@/lib/team";
 import { fmtWeekday } from "@/lib/dates";
 import { sendShiftReminder } from "@/lib/email";
+import { sendSMS } from "@/lib/sms";
 
 /**
  * Night-before shift reminders (run by Vercel Cron — see vercel.json).
@@ -22,7 +23,7 @@ export async function GET(request: Request) {
 
   const rows = await sql`
     SELECT s.id, to_char(s.shift_date,'YYYY-MM-DD') AS d, s.start_time, s.end_time, s.is_training,
-           s.team_member_id, tm.name, tm.email
+           s.team_member_id, tm.name, tm.email, tm.phone
     FROM shifts s JOIN team_members tm ON tm.id = s.team_member_id
     WHERE s.reminder_sent = false
       AND s.team_member_id IS NOT NULL
@@ -30,7 +31,7 @@ export async function GET(request: Request) {
   `;
 
   let sent = 0;
-  for (const r of rows as { id: number; d: string; start_time: string; end_time: string; is_training: boolean; name: string; email: string | null }[]) {
+  for (const r of rows as { id: number; d: string; start_time: string; end_time: string; is_training: boolean; name: string; email: string | null; phone: string | null }[]) {
     // only remind for published weeks
     const wk = await sql`SELECT status FROM schedule_weeks WHERE week_start = ${mondayOf(r.d)}`;
     if (wk[0]?.status !== "published") continue;
@@ -56,6 +57,7 @@ export async function GET(request: Request) {
         /* non-fatal */
       }
     }
+    await sendSMS(r.phone, `BORROW: reminder — you're working tomorrow, ${fmtWeekday(r.d)} ${prettyRange(r.start_time, r.end_time)}${r.is_training ? " (Training)" : ""}.`);
     await sql`UPDATE shifts SET reminder_sent = true WHERE id = ${r.id}`;
   }
 

@@ -4,6 +4,8 @@ import { getSession } from "@/lib/auth";
 import { memberForStaffUser, createNotification, getTeamSettings } from "@/lib/team";
 import { eligibleMembersForShift, isMemberEligible, shiftLabel } from "@/lib/coverage";
 import { sendCoverageRequest } from "@/lib/email";
+import { sendSMS } from "@/lib/sms";
+import { STUDIO_URL } from "@/lib/team";
 
 /** GET — the Open Shifts board for the signed-in staffer + their own requests. */
 export async function GET() {
@@ -105,6 +107,10 @@ export async function POST(request: Request) {
         /* non-fatal */
       }
     }
+    await sendSMS(
+      r.phone,
+      `BORROW${kind === "sick" ? " URGENT" : ""}: ${member.name} needs ${label} covered. Grab it: ${STUDIO_URL}/open-shifts`
+    );
   }
   // Sick/emergency also alerts the owner right away.
   if (kind === "sick") {
@@ -115,7 +121,7 @@ export async function POST(request: Request) {
       body: `${member.name} is out sick for ${label}. ${recipients.length} teammate(s) notified.`,
       link: "/team/coverage",
     });
+    await sendSMS(settings.owner_sms, `BORROW: ${member.name} called out sick for ${label}. ${recipients.length} teammate(s) notified.`);
   }
-  void settings;
   return NextResponse.json({ ok: true, id: rows[0].id, notified: recipients.length }, { status: 201 });
 }
