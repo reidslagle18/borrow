@@ -416,7 +416,7 @@ function TemplateEditor({ members, onSaved }: { members: Member[]; onSaved: () =
                 weekday: wd,
                 team_member_id: null,
                 start_time: "11:55",
-                end_time: "16:55",
+                end_time: "16:05",
                 is_training: false,
                 enabled: true,
               }

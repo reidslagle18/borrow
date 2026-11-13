@@ -857,7 +857,7 @@ async function createSchema(): Promise<void> {
       id SERIAL PRIMARY KEY,
       shift_date DATE NOT NULL,
       start_time TEXT NOT NULL DEFAULT '11:55',
-      end_time TEXT NOT NULL DEFAULT '16:55',
+      end_time TEXT NOT NULL DEFAULT '16:05',
       team_member_id INT REFERENCES team_members(id) ON DELETE SET NULL,
       is_training BOOLEAN NOT NULL DEFAULT false,
       note TEXT,
@@ -918,7 +918,7 @@ async function createSchema(): Promise<void> {
       weekday INT PRIMARY KEY CHECK (weekday BETWEEN 1 AND 6),
       team_member_id INT REFERENCES team_members(id) ON DELETE SET NULL,
       start_time TEXT NOT NULL DEFAULT '11:55',
-      end_time TEXT NOT NULL DEFAULT '16:55',
+      end_time TEXT NOT NULL DEFAULT '16:05',
       is_training BOOLEAN NOT NULL DEFAULT false,
       enabled BOOLEAN NOT NULL DEFAULT true
     )
