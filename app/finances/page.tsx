@@ -226,41 +226,6 @@ function rangeBounds(preset: RangePreset, from: string, to: string): { from: str
   return { from: from || monthStartISO(), to: to || today };
 }
 
-/** Admin-only ESTIMATED labor cost (from hourly rates × hours). Not payroll. */
-function LaborEstimateCard() {
-  const [est, setEst] = useState<{ week: number; month: number; note: string } | null>(null);
-  useEffect(() => {
-    fetch("/api/team/labor-estimate")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => d && setEst(d))
-      .catch(() => {});
-  }, []);
-  if (!est) return null;
-  return (
-    <section className="mt-8 rounded-2xl border border-lavender-deep/30 bg-lavender/15 p-5">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-medium">Estimated labor cost</h2>
-        <span className="rounded-full bg-lavender px-2.5 py-0.5 text-[11px] font-medium">
-          Estimate, not payroll
-        </span>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-6">
-        <div>
-          <p className="text-[12px] uppercase tracking-[0.15em] text-ink/50">This week</p>
-          <p className="font-serif text-3xl font-semibold">{money(est.week)}</p>
-        </div>
-        <div>
-          <p className="text-[12px] uppercase tracking-[0.15em] text-ink/50">This month</p>
-          <p className="font-serif text-3xl font-semibold">{money(est.month)}</p>
-        </div>
-      </div>
-      <p className="mt-3 text-[12px] text-ink/50">
-        From each person&apos;s hourly rate × clocked hours. {est.note}
-      </p>
-    </section>
-  );
-}
-
 export default function FinancesPage() {
   const [data, setData] = useState<Finances | null>(null);
   const [error, setError] = useState("");
@@ -312,7 +277,6 @@ export default function FinancesPage() {
           </div>
         ) : (
           <>
-            <LaborEstimateCard />
             {/* Net Take + Estimated Profit — top-line figures, one range selector
                 applies to both. */}
             <section className="mt-8">

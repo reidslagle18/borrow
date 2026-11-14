@@ -265,7 +265,6 @@ export default function TodayPage() {
   // it's handled. Only groups with items render.
   const attention: { key: string; label: string; href: string }[] = notif
     ? [
-        { key: "coverage_unfilled", n: notif.coverage_unfilled?.length ?? 0, href: "/team/coverage", one: "shift still needs coverage", many: "shifts still need coverage" },
         { key: "overdue_reserved", n: notif.overdue_reserved?.length ?? 0, href: "/returns", one: "overdue piece with a reservation waiting", many: "overdue pieces with reservations waiting" },
         { key: "disputed", n: notif.disputed?.length ?? 0, href: "/consignors", one: "disputed replacement value", many: "disputed replacement values" },
         { key: "pending_approvals", n: notif.pending_approvals?.length ?? 0, href: "/consignors", one: "consignor with items to approve", many: "consignors with items to approve" },
@@ -423,35 +422,6 @@ export default function TodayPage() {
               · <span className="font-medium">{dropoffs.length}</span> drop-off
               {dropoffs.length === 1 ? "" : "s"}
             </p>
-
-            {/* Working today — who's on the front desk. */}
-            <section className="mt-6 rounded-2xl border border-sage-deep/30 bg-sage/15 p-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-medium">Working today</h2>
-                <Link href="/team/schedule" className="text-[13px] text-ink/45 hover:text-ink">
-                  Schedule →
-                </Link>
-              </div>
-              {data.working_today && data.working_today.member_name ? (
-                <p className="mt-2 rounded-xl bg-white/70 px-4 py-3 text-[15px]">
-                  <span className="font-medium">{data.working_today.member_name}</span>{" "}
-                  <span className="text-ink/55">
-                    · {prettyTime(data.working_today.start_time)} – {prettyTime(data.working_today.end_time)}
-                  </span>
-                  {data.working_today.is_training && (
-                    <span className="ml-2 rounded-full bg-butter px-2.5 py-0.5 text-[11px] font-medium">
-                      Training
-                    </span>
-                  )}
-                </p>
-              ) : (
-                <p className="mt-2 rounded-xl bg-white/60 px-4 py-3 text-[15px] text-ink/55">
-                  {data.working_today
-                    ? "No one is assigned to the front desk today."
-                    : "No shift scheduled today."}
-                </p>
-              )}
-            </section>
 
             {/* Pull from racks — two groups: consignor pulls (holds/retrievals
                 starting today or tomorrow) and reserved pulls (pieces at/near
