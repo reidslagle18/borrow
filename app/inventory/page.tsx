@@ -202,6 +202,10 @@ export default function InventoryPage() {
         setItems((prev) =>
           (prev ?? []).map((i) => (i.id === saved.id ? { ...i, featured: saved.featured, featured_rank: saved.featured_rank } : i))
         );
+      } else {
+        // Surface the server guard (e.g. the 6-piece Featured cap).
+        const d = (await res.json().catch(() => ({}))) as { error?: string };
+        alert(d.error || "Couldn't update Featured — try again.");
       }
     } finally {
       setFeatBusy(null);

@@ -429,6 +429,18 @@ export async function PATCH(request: Request, ctx: Ctx) {
     const on = b.featured === true;
     let rows;
     if (on) {
+      // Hard cap: at most 6 pieces can be featured. Block turning a 7th on so the
+      // homepage showcase always has a full, even row to work with. (Count only
+      // pieces that aren't already this one.)
+      const countRows = await sql`
+        SELECT COUNT(*)::int AS n FROM items
+        WHERE featured = true AND id <> ${id} AND COALESCE(barcode, '') <> ${id}`;
+      if (countRows[0].n >= 6) {
+        return NextResponse.json(
+          { error: "You can feature up to 6 pieces. Remove one before adding another." },
+          { status: 409 }
+        );
+      }
       rows = await sql`
         UPDATE items SET
           featured = true,

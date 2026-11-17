@@ -131,6 +131,37 @@ export default function FeaturedManagerPage() {
         {savedAt && <p className="mt-3 text-sm text-sage-deep">Saved ✓ — live on the shop.</p>}
         {err && <p className="mt-3 text-sm text-blush-deep">{err}</p>}
 
+        {/* Counter + even-number guidance. The shop only ever shows an even count
+            (2/4/6) from the top of this order, so an odd list drops the last one. */}
+        {list &&
+          (() => {
+            const n = list.length;
+            const shown = Math.min(6, n - (n % 2));
+            if (n >= 2 && n <= 6 && n % 2 === 0)
+              return (
+                <p className="mt-3 rounded-xl bg-sage/25 px-4 py-2.5 text-[13px]">
+                  <strong>{n} of 6 featured</strong> — all set, all {n} show on the site.
+                </p>
+              );
+            if (n < 2)
+              return (
+                <p className="mt-3 rounded-xl bg-blush/25 px-4 py-2.5 text-[13px] text-ink/80">
+                  <strong>{n} of 6 featured.</strong> The Featured section stays hidden until at least 2 pieces are featured — add {2 - n} more.
+                </p>
+              );
+            if (n % 2 === 1)
+              return (
+                <p className="mt-3 rounded-xl bg-butter/40 px-4 py-2.5 text-[13px] text-ink/80">
+                  <strong>{n} featured:</strong> only the first {shown} will show on the site (it shows an even number so there&apos;s never an orphan). Add or remove one.
+                </p>
+              );
+            return (
+              <p className="mt-3 rounded-xl bg-butter/40 px-4 py-2.5 text-[13px] text-ink/80">
+                <strong>{n} featured:</strong> the max is 6 — only the first 6 (in this order) show on the site. Remove {n - 6}.
+              </p>
+            );
+          })()}
+
         {!list ? (
           <div className="mt-8 h-64 animate-pulse rounded-2xl bg-ink/5" />
         ) : list.length === 0 ? (
